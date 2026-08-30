@@ -36,7 +36,10 @@ export function artifactPath(...parts) {
 
 export function downloadPath(...parts) {
   mkdirSync(DOWNLOAD_DIR, { recursive: true });
-  return path.join(DOWNLOAD_DIR, ...parts);
+  // A download's suggested filename comes from the (untrusted) server —
+  // basename it so a Content-Disposition of "../../evil" can't write
+  // outside artifacts/downloads/.
+  return path.join(DOWNLOAD_DIR, ...parts.map((p) => path.basename(p)));
 }
 
 // Upload sources are restricted to artifacts/uploads/ so a page's content
@@ -46,6 +49,30 @@ export function downloadPath(...parts) {
 export function uploadPath(...parts) {
   mkdirSync(UPLOAD_DIR, { recursive: true });
   return path.join(UPLOAD_DIR, ...parts);
+}
+
+// browser_navigate accepts any URL by design (that's the point of a browser
+// tool) — but a file:// URL bypasses the upload path restriction entirely:
+// the page IS the local file, readable via snapshot/dom_query. Scope file://
+// to this project's own tree (fixtures, artifacts) so it can't be used to
+// read arbitrary files (e.g. credentials, SSH keys) elsewhere on disk.
+export function assertNavigateAllowed(urlStr) {
+  let url;
+  try {
+    url = new URL(urlStr);
+  } catch {
+    return; // not a well-formed URL; let page.goto surface its own error
+  }
+  if (url.protocol !== "file:") return;
+  const filePath = decodeURIComponent(url.pathname).replace(/^\/([a-zA-Z]:)/, "$1");
+  const resolved = path.resolve(filePath);
+  const base = path.resolve(ROOT) + path.sep;
+  if (!resolved.startsWith(base)) {
+    throw new Error(
+      `file:// navigation to "${filePath}" is outside this project's directory (${ROOT}); ` +
+        "only local files under the project are allowed to prevent arbitrary local file disclosure"
+    );
+  }
 }
 
 export function assertUploadAllowed(filePath) {

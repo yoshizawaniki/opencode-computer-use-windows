@@ -13,6 +13,7 @@ import {
   downloadPath,
   uploadPath,
   assertUploadAllowed,
+  assertNavigateAllowed,
 } from "../browser-session.js";
 import { snapshot, locatorFor } from "../snapshot.js";
 import { createHash } from "node:crypto";
@@ -55,6 +56,7 @@ export function registerBrowserTools(server) {
       inputSchema: { url: z.string().describe("URL to navigate to") },
     },
     async ({ url }) => {
+      assertNavigateAllowed(url);
       const page = await getActivePage();
       await page.goto(url, { waitUntil: "load" });
       return text(await observedState(page, `navigate:${url}`));

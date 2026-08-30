@@ -210,6 +210,15 @@ function ConvertTo-ElementJson($Element, [string]$Ref) {
     $valueOut = $rawValue
     if ($isPassword) { $valueOut = $null }
 
+    # A standard password box's Name is a short label ("Password") and is
+    # safe to keep — redacting it would remove useful, harmless UI context.
+    # But a non-standard control could put the actual secret INTO its Name;
+    # a long name on a password-flagged element is the tell for that, so
+    # redact only in that case rather than always destroying the label.
+    if ($isPassword -and $name -and $name.Length -gt 40) {
+        $name = "<redacted, length=$($name.Length)>"
+    }
+
     $processName = $null
     try {
         $proc = [System.Diagnostics.Process]::GetProcessById($cur.ProcessId)
@@ -363,13 +372,21 @@ try {
             $resolved = Resolve-Ref $req.ref
             $maxDepth = if ($null -ne $req.maxDepth) { [int]$req.maxDepth } else { 4 }
             $maxNodes = if ($null -ne $req.maxNodes) { [int]$req.maxNodes } else { 200 }
+            # Hard ceilings regardless of what the caller asks for — an LLM
+            # passing maxNodes/maxDepth far larger than intended must not be
+            # able to force an unbounded walk of the desktop's UI tree.
+            if ($maxDepth -gt 20) { $maxDepth = 20 }
+            if ($maxNodes -gt 2000) { $maxNodes = 2000 }
             $basePath = ($req.ref.Split('|', 3))[2]
 
             $elements = @()
             $queue = New-Object System.Collections.Generic.Queue[object]
             $queue.Enqueue(@{ Element = $resolved.Element; Path = $basePath; Depth = 0 })
-            while ($queue.Count -gt 0 -and $elements.Count -lt $maxNodes) {
+            $visited = 0
+            $safetyCap = 20000 # ponytail: same hard cap as Find-Elements, in case a real subtree is huge before maxNodes/maxDepth trims it
+            while ($queue.Count -gt 0 -and $elements.Count -lt $maxNodes -and $visited -lt $safetyCap) {
                 $item = $queue.Dequeue()
+                $visited++
                 $refStr = Make-Ref -Hwnd $resolved.Hwnd -OwnerPid $resolved.Pid -Path $item.Path
                 $j = ConvertTo-ElementJson -Element $item.Element -Ref $refStr
                 $j['depth'] = $item.Depth

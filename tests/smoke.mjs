@@ -147,6 +147,21 @@ try {
 }
 must(uploadRejected, "browser_upload refuses a path outside artifacts/uploads");
 
+// Negative test: browser_navigate must refuse file:// outside this project —
+// otherwise it's a bypass of the upload path restriction's whole intent
+// (arbitrary local file content becomes readable via snapshot/dom_query).
+let outsideFileRejected = false;
+try {
+  const r = await client.callTool({
+    name: "browser_navigate",
+    arguments: { url: pathToFileURL(path.join(root, "..", "package.json")).href },
+  });
+  outsideFileRejected = r.isError === true;
+} catch {
+  outsideFileRejected = true;
+}
+must(outsideFileRejected, "browser_navigate refuses a file:// URL outside the project directory");
+
 // Element cap: a page with far more interactive elements than the cap must
 // not dump an unbounded tree at the LLM.
 const stressUrl = pathToFileURL(path.join(root, "tests", "fixtures", "stress.html")).href;

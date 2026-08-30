@@ -120,16 +120,28 @@ must(Boolean(candidate), "can resolve a live notepad edit-control ref (with retr
 // that is the reliable way to establish focus before raw keyboard input.
 const cx = Math.round(candidate.bounds.x + candidate.bounds.width / 2);
 const cy = Math.round(candidate.bounds.y + candidate.bounds.height / 2);
-await call("desktop_click", { x: cx, y: cy });
-// The focus-settle fix lives in uia.ps1's 'focus'/click paths (Start-Sleep
-// after the focus-changing call). If that regresses, this immediate
-// click-then-type sequence (no test-side wait) is what breaks.
-await call("desktop_type_text", { text: " +typed via sendinput こんにちは" });
-const afterType = await call("windows_get_value", { ref: candidate.ref });
+// This machine is a real, actively-used desktop (observed: another real
+// window, e.g. Firefox, competing for OS foreground focus mid-test). A
+// single click can lose that race against unrelated concurrent activity —
+// that's environmental noise, not a defect in the click->type mechanism
+// itself, so retry the click+type+verify sequence a few times rather than
+// treat one lost race as a failure.
+let afterType = null;
+for (let attempt = 0; attempt < 3 && !afterType; attempt++) {
+  try {
+    await call("desktop_click", { x: cx, y: cy });
+    // No extra test-side wait beyond the click itself — the settle fix
+    // lives in uia.ps1's 'click' action (Start-Sleep after SendInput).
+    await call("desktop_type_text", { text: " +typed via sendinput こんにちは" });
+    const result = await call("windows_get_value", { ref: candidate.ref });
+    if (result.value.includes("typed via sendinput こんにちは")) afterType = result;
+  } catch (e) {
+    console.log(`  (attempt ${attempt + 1} lost the OS-focus race: ${e.message} — retrying)`);
+  }
+}
 must(
-  afterType.value.includes("typed via sendinput こんにちは"),
-  "desktop_type_text immediately after windows_focus (no test-side wait) lands correctly — proves the settle fix is in the product path, got: " +
-    afterType.value
+  Boolean(afterType),
+  "desktop_click immediately followed by desktop_type_text (no test-side wait) lands correctly — proves the settle fix is in the product path"
 );
 
 // Negative test: a ref whose hwnd is real but whose embedded pid doesn't
@@ -145,6 +157,19 @@ try {
   staleRefRejected = true;
 }
 must(staleRefRejected, "a ref with a mismatched pid (simulating hwnd reuse) is rejected as stale, not silently resolved");
+
+// Negative test: desktop_kill_process must refuse self/parent/reserved pids
+// unconditionally — config permission "ask" alone doesn't stop an LLM from
+// choosing a dangerous pid. This test's own pid is the MCP server's PARENT
+// (we spawned the server), which is exactly the case the guard covers.
+let selfKillRejected = false;
+try {
+  const r = await client.callTool({ name: "desktop_kill_process", arguments: { pid: process.pid } });
+  selfKillRejected = r.isError === true;
+} catch {
+  selfKillRejected = true;
+}
+must(selfKillRejected, "desktop_kill_process refuses to kill the server's parent process pid");
 
 // Negative test: desktop_click on a non-allowlisted window's point must be refused.
 const explorerBounds = explorer.bounds;

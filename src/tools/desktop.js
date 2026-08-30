@@ -22,6 +22,17 @@ async function assertFocusAllowed() {
   return win;
 }
 
+// kill_process is gated by config permission (ask), not the window
+// allowlist, by design — but "ask" alone doesn't stop an LLM-chosen pid from
+// being this server's own process, its parent (OpenCode), or a reserved
+// system pid. Those are refused unconditionally, before ask is even relevant.
+function assertKillablePid(pid) {
+  const reserved = new Set([0, 4, process.pid, process.ppid]);
+  if (reserved.has(pid)) {
+    throw new Error(`refusing to kill pid ${pid}: it is a reserved/self/parent process, not a target app`);
+  }
+}
+
 export function registerDesktopTools(server) {
   server.registerTool(
     "desktop_screenshot",
@@ -185,6 +196,9 @@ export function registerDesktopTools(server) {
         "desktop_close_window for a single window when the target might be one of these.",
       inputSchema: { pid: z.number() },
     },
-    async ({ pid }) => text(await callUia({ action: "kill_process", pid }))
+    async ({ pid }) => {
+      assertKillablePid(pid);
+      return text(await callUia({ action: "kill_process", pid }));
+    }
   );
 }
