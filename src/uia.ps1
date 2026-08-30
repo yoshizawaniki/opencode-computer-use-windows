@@ -197,10 +197,14 @@ function ConvertTo-ElementJson($Element, [string]$Ref) {
 
     # Redaction lives here only: AutomationElement.IsPassword first, plus a
     # belt-and-braces name/automationId regex match, so no caller has to remember to check.
+    # Split camelCase humps first (JS side does the same in redaction.js) so
+    # the short-word identifier-token boundary below can see e.g. "sessionKey".
+    $sensitivePattern = '(?i)(password|passwd|secret|token|csrf|cvv|api[-_]?key|access[-_]?key|private[-_]?key|(^|[^a-z])(key|auth|pin)([^a-z]|$))'
+    $splitWords = { param($s) if ($s) { [regex]::Replace($s, '([a-z0-9])([A-Z])', '$1 $2') } else { $s } }
     $isPassword = [bool]$cur.IsPassword
     if (-not $isPassword) {
-        if (($name -and $name -match '(?i)(password|passwd|secret|token|csrf|cvv|api[-_]?key|access[-_]?key|private[-_]?key|\bkey\b|\bauth\b|\bpin\b)') -or
-            ($automationId -and $automationId -match '(?i)(password|passwd|secret|token|csrf|cvv|api[-_]?key|access[-_]?key|private[-_]?key|\bkey\b|\bauth\b|\bpin\b)')) {
+        if (($name -and (& $splitWords $name) -match $sensitivePattern) -or
+            ($automationId -and (& $splitWords $automationId) -match $sensitivePattern)) {
             $isPassword = $true
         }
     }

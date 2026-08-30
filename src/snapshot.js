@@ -20,13 +20,17 @@ export async function snapshot(page) {
         return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== "hidden";
       };
       const sensitiveRe = new RegExp(sensitivePattern, "i");
+      // Splits camelCase humps ("sessionKey" -> "session Key") so the
+      // identifier-token boundary in sensitivePattern can see them —
+      // snake_case already has "_" as a non-letter separator.
+      const splitWords = (s) => String(s || "").replace(/([a-z0-9])([A-Z])/g, "$1 $2");
       const inputValue = (el) => {
         if (el.tagName !== "INPUT") return "";
         const isSensitive =
           el.type === "password" ||
-          sensitiveRe.test(el.name || "") ||
-          sensitiveRe.test(el.id || "") ||
-          sensitiveRe.test(el.getAttribute("aria-label") || "");
+          sensitiveRe.test(splitWords(el.name)) ||
+          sensitiveRe.test(splitWords(el.id)) ||
+          sensitiveRe.test(splitWords(el.getAttribute("aria-label")));
         if (isSensitive) return el.value ? `<redacted, length=${el.value.length}>` : "";
         return el.value || "";
       };

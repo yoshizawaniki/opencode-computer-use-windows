@@ -69,12 +69,13 @@ export function registerDevtoolsTools(server) {
         ({ selector, limit, sensitivePattern }) => {
           const nodes = Array.from(document.querySelectorAll(selector)).slice(0, limit);
           const sensitiveRe = new RegExp(sensitivePattern, "i");
+          const splitWords = (s) => String(s || "").replace(/([a-z0-9])([A-Z])/g, "$1 $2");
           return nodes.map((el) => {
             // `value` on an <input> and `content` on a csrf/token/auth/secret/key
             // <meta> tag are exactly the kind of secret the cookie/storage
             // tools redact — dom_query must not become the bypass route for it.
             const isSecretMeta =
-              el.tagName === "META" && sensitiveRe.test(el.getAttribute("name") || el.getAttribute("property") || "");
+              el.tagName === "META" && sensitiveRe.test(splitWords(el.getAttribute("name") || el.getAttribute("property")));
             const attributes = Object.fromEntries(
               Array.from(el.attributes).map((a) => {
                 const redact = (a.name === "value" && el.tagName === "INPUT") || (a.name === "content" && isSecretMeta);
