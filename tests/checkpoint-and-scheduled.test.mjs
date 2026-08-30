@@ -118,6 +118,9 @@ try {
   );
   must(registered.registered === true, "scheduled_task_register actually creates a real Windows scheduled task");
 
+  const listed = JSON.parse((await client.callTool({ name: "scheduled_task_list", arguments: {} })).content[0].text);
+  must(listed.some((t) => t.name === taskName), `scheduled_task_list shows the real task, got: ${JSON.stringify(listed)}`);
+
   // Regression: checkpoint.js and scheduled-tasks.js used to share
   // artifacts/tasks/, so listCheckpoints picked up scheduled-tasks.js's
   // <name>.meta.json files as ghost checkpoint entries (found in commander
