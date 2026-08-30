@@ -28,7 +28,7 @@ dialog anyway; only the OpenCode host can, and it does so by tool name only toda
 | clipboard_read / clipboard_write | ask (config) | read defaults to metadata-only (length+sha256) even with the ask approved; `includeValue:true` opts into the raw text |
 | desktop_notify | none | display-only, no state mutation beyond a transient balloon |
 | artifact_preview | scope: path restricted to `artifacts/` | same discipline as upload/download path scoping |
-| workflow_record_start / _stop / _discard / _edit / _delete / _replay | none (tool-level `allow`) | replay dispatches through the SAME per-tool guards (scope/ask) as a live call — recording a workflow doesn't bypass anything a live call would hit |
+| workflow_record_start / _stop / _discard / _edit / _delete / _replay | none (tool-level `allow`) | `workflow_replay` dispatches in-process via tool-registry.js, which preserves each step's **scope** guard (assertNavigateAllowed/assertProcessAllowed/etc. still run) but CANNOT trigger the OpenCode host's **ask** dialog — that only fires for a real MCP tool call by name. Found in commander review: this made every ask-gated tool (desktop_kill_process, desktop_launch_app, desktop_close_window, browser_attach, browser_evaluate, clipboard_read, clipboard_write) callable unattended via a crafted workflow file. Fixed with `REPLAY_ALLOWED`, a fail-closed allowlist in `src/workflow.js` — those 7 tools are refused at replay dispatch regardless of what a workflow file contains, and any FUTURE ask-gated tool defaults to refused until explicitly added to the allowlist (the safe direction: a forgotten tool is blocked, not silently bypassable). |
 
 ## Known gap: no origin-level permission for browser_click/type/select/hover/scroll/key
 

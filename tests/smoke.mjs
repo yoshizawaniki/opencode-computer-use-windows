@@ -416,6 +416,26 @@ if (!replayThrew) {
 must(replayThrew, "replaying a workflow with an unresolved requiresManualEdit step is refused, not silently skipped");
 await client.callTool({ name: "workflow_delete", arguments: { name: "smoke-wf-secret" } });
 
+// workflow_replay must never bypass the OpenCode host's ask-permission
+// dialog — found in commander review: replay dispatches tool handlers
+// IN-PROCESS, which never goes through the host's per-tool-call ask gate.
+// A crafted workflow file naming an ask-gated tool (desktop_kill_process
+// here — any pid works, the allowlist check must reject it before ever
+// looking at args) must be refused at replay time, not silently executed.
+await client.callTool({ name: "workflow_edit", arguments: { name: "smoke-wf-danger", stepsJson: JSON.stringify([{ tool: "desktop_kill_process", args: { pid: 999999 } }]) } });
+let dangerousReplayRefused = false;
+try {
+  await client.callTool({ name: "workflow_replay", arguments: { name: "smoke-wf-danger", params: {} } });
+} catch {
+  dangerousReplayRefused = true;
+}
+if (!dangerousReplayRefused) {
+  const r = await client.callTool({ name: "workflow_replay", arguments: { name: "smoke-wf-danger", params: {} } });
+  dangerousReplayRefused = r.isError === true;
+}
+must(dangerousReplayRefused, "workflow_replay refuses an ask-gated tool (desktop_kill_process) rather than bypassing the host's approval dialog");
+await client.callTool({ name: "workflow_delete", arguments: { name: "smoke-wf-danger" } });
+
 // Clipboard: metadata-only by default, real value opt-in, write round-trips.
 if (process.platform === "win32") {
   const CLIP_TEXT = "opencode-clipboard-smoke-test-98765";

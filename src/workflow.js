@@ -27,6 +27,46 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const WORKFLOW_DIR = path.join(ROOT, "..", "artifacts", "workflows");
 const SENSITIVE_RE = new RegExp(SENSITIVE_NAME_PATTERN, "i");
 
+// FAIL-CLOSED allowlist for workflow_replay dispatch. Found in commander
+// review: replayWorkflow() calls tool-registry.js handlers IN-PROCESS,
+// which bypasses the OpenCode host's ask-permission dialog entirely (the
+// host gates by MCP tool-call name; an in-process function call never goes
+// through it). Without this, a workflow file — plain JSON anyone can write
+// to artifacts/workflows/ or an agent can produce via workflow_edit — is an
+// unguarded remote-code-equivalent path to desktop_kill_process,
+// desktop_launch_app, browser_attach, clipboard_read(includeValue), etc.
+//
+// This is an ALLOWLIST, not a denylist, specifically so a NEW tool added
+// later defaults to BLOCKED-from-replay (safe: replay throws a clear error,
+// caught immediately) rather than defaulting to allowed (unsafe: silently
+// bypasses whatever ask gate the new tool has in opencode.jsonc). Keep in
+// sync with src/PERMISSION_COVERAGE.md's ask-gated rows — a tool listed
+// there as "ask" must NEVER be added here.
+const REPLAY_ALLOWED = new Set([
+  "browser_snapshot", "browser_navigate", "browser_back", "browser_forward", "browser_reload",
+  "browser_click", "browser_type", "browser_secret_fill", "browser_select", "browser_hover",
+  "browser_scroll", "browser_key", "browser_wait", "browser_upload",
+  "browser_click_and_wait_for_download", "browser_last_dialog", "browser_screenshot",
+  "browser_tabs_list", "browser_tab_new", "browser_tab_select", "browser_tab_close",
+  "browser_session_close", "browser_detach",
+  "browser_console_log", "browser_network_log", "browser_dom_query", "browser_computed_style",
+  "browser_performance", "browser_cookies", "browser_storage", "browser_assert_visible",
+  "browser_assert_text",
+  "browser_screenshot_region", "browser_screenshot_diff", "browser_wait_for_visual_change",
+  "windows_list", "windows_active", "windows_tree", "windows_find", "windows_wait_for",
+  "windows_get_value", "windows_set_value", "windows_invoke", "windows_toggle",
+  "windows_select", "windows_focus",
+  "desktop_screenshot", "desktop_screenshot_region", "desktop_app_context", "desktop_click",
+  "desktop_move", "desktop_drag", "desktop_scroll", "desktop_type_text", "desktop_secret_type",
+  "desktop_key", "desktop_wait",
+  "desktop_notify", "artifact_preview",
+  // Deliberately excluded (ask-gated in opencode.jsonc — see
+  // PERMISSION_COVERAGE.md): browser_evaluate, browser_attach,
+  // desktop_launch_app, desktop_close_window, desktop_kill_process,
+  // clipboard_read, clipboard_write. Also excluded: every workflow_* tool
+  // (replaying a workflow that replays a workflow is not supported).
+]);
+
 // Tools it's never useful to replay (pure reads, or the workflow_* tools
 // themselves — recording a workflow while recording it is nonsensical).
 const EXCLUDE_FROM_RECORDING = new Set([
@@ -57,6 +97,7 @@ const WINDOWS_REF_TOOLS = new Set([
 ]);
 
 let recording = null; // { name, steps: [] } | null
+let inReplay = false; // true while replayWorkflow's dispatch loop is running
 
 export function isRecording() {
   return recording !== null;
@@ -89,7 +130,7 @@ export function captureBrowserTarget(toolName, args) {
 // Never throws — a recording hiccup must not break the underlying tool
 // call it's observing.
 export async function recordStep(toolName, args, preCapturedBrowserInfo) {
-  if (!recording || EXCLUDE_FROM_RECORDING.has(toolName) || toolName.startsWith("workflow_")) return;
+  if (!recording || inReplay || EXCLUDE_FROM_RECORDING.has(toolName) || toolName.startsWith("workflow_")) return;
   try {
     const step = { tool: toolName, args: { ...args } };
 
@@ -239,9 +280,23 @@ function substituteParams(value, params) {
 export async function replayWorkflow(name, params = {}) {
   const wf = loadWorkflow(name);
   const results = [];
-  for (const [i, step] of wf.steps.entries()) {
+  const wasReplaying = inReplay;
+  inReplay = true; // steps dispatched during replay must not get re-recorded into an active recording
+  try {
+    for (const [i, step] of wf.steps.entries()) {
     if (step.requiresManualEdit) {
       throw new Error(`step ${i + 1} (${step.tool}) still needs manual edit (sensitive value was omitted at record time) — edit the workflow before replay`);
+    }
+    // Dispatching a tool by name in-process (below) never goes through the
+    // OpenCode host's ask-permission dialog — that only gates real MCP
+    // tool calls. REPLAY_ALLOWED is the fail-closed substitute: a tool the
+    // user would normally be asked to approve must NEVER run unattended
+    // via a workflow file. See the allowlist's own comment for why this is
+    // an allowlist, not a denylist.
+    if (!REPLAY_ALLOWED.has(step.tool)) {
+      throw new Error(
+        `step ${i + 1}: "${step.tool}" requires the user's live approval and cannot run via workflow_replay — call it directly instead`
+      );
     }
     const args = substituteParams({ ...step.args }, params);
 
@@ -281,6 +336,9 @@ export async function replayWorkflow(name, params = {}) {
         throw new Error(`step ${i + 1} (${step.tool}) verification failed: expected result to contain "${step.expect.textContains}"`);
       }
     }
+    }
+    return { name, steps: results };
+  } finally {
+    inReplay = wasReplaying;
   }
-  return { name, steps: results };
 }
