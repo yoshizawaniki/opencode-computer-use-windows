@@ -95,6 +95,18 @@ try {
     "no network activity was captured for the un-instrumented user-opened tab"
   );
 
+  // browser_tab_new while attached must add exactly one NEW, already-selected
+  // tab — not a ghost duplicate left behind in `discovered` (the generic
+  // page-listener parks new pages there in attach mode; newTab() must adopt
+  // that same page/id rather than tracking it a second time under a new id).
+  const beforeNewTab = await call("browser_tabs_list");
+  await call("browser_tab_new", {});
+  const afterNewTab = await call("browser_tabs_list");
+  must(afterNewTab.length === beforeNewTab.length + 1, `browser_tab_new (attach mode) adds exactly one tab, got ${beforeNewTab.length} -> ${afterNewTab.length}`);
+  const createdTab = afterNewTab.find((t) => !beforeNewTab.some((b) => b.id === t.id));
+  must(Boolean(createdTab) && createdTab.selected === true, "the tab browser_tab_new created is immediately selected/instrumented, not left as a discovered ghost");
+  await call("browser_tab_close", { id: createdTab.id });
+
   // Negative test: browser_evaluate must be refused unconditionally while attached.
   let evalRejected = false;
   try {

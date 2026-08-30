@@ -199,7 +199,7 @@ async function ensureContext() {
   // In attach mode, tabs the agent hasn't explicitly selected must stay
   // un-instrumented (no listeners, not operable) — so never auto-create a
   // page here the way launch mode does.
-  if (mode === "launch" && tabs.size === 0) trackPage(await context.newPage());
+  if (mode === "launch" && tabs.size === 0) adoptPage(await context.newPage());
   return context;
 }
 
@@ -330,12 +330,32 @@ export async function listTabs() {
   return result;
 }
 
+// Shared by newTab() and withPopupTracking(): a Page that just appeared may
+// already have been claimed by the generic context.on("page") listener
+// above (launch mode: tracked immediately; attach mode: parked in
+// `discovered`) BEFORE the caller's own await resolves — context.newPage()
+// and a click-triggered popup both fire that listener synchronously ahead
+// of their promise settling. Re-tracking blindly here double-registers
+// listeners (double-logged console/network, double dialog handlers).
+// adoptPage() checks both places first so a page is instrumented exactly once.
+function adoptPage(page) {
+  const trackedId = [...tabs.entries()].find(([, p]) => p === page)?.[0];
+  if (trackedId) {
+    activeTabId = trackedId;
+    return trackedId;
+  }
+  const discoveredId = [...discovered.entries()].find(([, p]) => p === page)?.[0];
+  if (discoveredId) {
+    discovered.delete(discoveredId);
+    return trackPage(page, discoveredId); // instrument now, first time
+  }
+  return trackPage(page); // genuinely new to us
+}
+
 export async function newTab() {
   const context = await ensureContext();
   const p = await context.newPage();
-  const id = trackPage(p);
-  activeTabId = id;
-  return id;
+  return adoptPage(p);
 }
 
 export async function selectTab(id) {
@@ -375,21 +395,7 @@ export async function withPopupTracking(context, action) {
   const popupPromise = context.waitForEvent("page", { timeout: 1000 }).catch(() => null);
   await action();
   const popup = await popupPromise;
-  if (!popup) return;
-  const trackedId = [...tabs.entries()].find(([, p]) => p === popup)?.[0];
-  if (trackedId) {
-    activeTabId = trackedId;
-    return;
-  }
-  // In attach mode the generic page listener sent this popup to `discovered`
-  // (untracked) rather than instrumenting it — but it's a DIRECT result of
-  // the agent's own click, so promote it now, same as selectTab() would.
-  const discoveredId = [...discovered.entries()].find(([, p]) => p === popup)?.[0];
-  if (discoveredId) {
-    discovered.delete(discoveredId);
-    trackPage(popup, discoveredId);
-    activeTabId = discoveredId;
-  }
+  if (popup) adoptPage(popup);
 }
 
 export function getLastDialog() {

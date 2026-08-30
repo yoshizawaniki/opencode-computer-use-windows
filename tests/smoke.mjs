@@ -68,6 +68,17 @@ try {
 }
 must(staleRejected, "reusing a ref from a prior snapshot generation is rejected as stale");
 
+// browser_tab_new must add exactly one tab — a page appearing via
+// context.newPage() can get claimed by the generic page-listener before
+// newTab()'s own await resolves; double-tracking it would double-register
+// console/network listeners and dialog handlers on the SAME page.
+const beforeNewTab = JSON.parse((await client.callTool({ name: "browser_tabs_list", arguments: {} })).content[0].text);
+await client.callTool({ name: "browser_tab_new", arguments: {} });
+const afterNewTab = JSON.parse((await client.callTool({ name: "browser_tabs_list", arguments: {} })).content[0].text);
+must(afterNewTab.length === beforeNewTab.length + 1, `browser_tab_new adds exactly one tab, got ${beforeNewTab.length} -> ${afterNewTab.length}`);
+const createdTabId = afterNewTab.find((t) => t.active).id;
+await client.callTool({ name: "browser_tab_close", arguments: { id: createdTabId } });
+
 // Tab tracking: clicking a target=_blank link must switch the active tab to
 // the popup, not silently keep reporting the abandoned original tab.
 const tabsBefore = JSON.parse((await client.callTool({ name: "browser_tabs_list", arguments: {} })).content[0].text);
