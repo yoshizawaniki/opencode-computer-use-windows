@@ -118,8 +118,37 @@ try {
   );
   must(registered.registered === true, "scheduled_task_register actually creates a real Windows scheduled task");
 
-  const listed = JSON.parse((await client.callTool({ name: "scheduled_task_list", arguments: {} })).content[0].text);
-  must(listed.some((t) => t.name === taskName), `scheduled_task_list shows the real task, got: ${JSON.stringify(listed)}`);
+  // Regression: checkpoint.js and scheduled-tasks.js used to share
+  // artifacts/tasks/, so listCheckpoints picked up scheduled-tasks.js's
+  // <name>.meta.json files as ghost checkpoint entries (found in commander
+  // review). They're now separate directories — a checkpoint list taken
+  // while a scheduled task exists must show ONLY real checkpoints.
+  const checkpointsWithTaskPresent = JSON.parse((await client.callTool({ name: "task_checkpoint_list", arguments: {} })).content[0].text);
+  must(
+    checkpointsWithTaskPresent.every((c) => typeof c.taskId === "string" && c.taskId.length > 0),
+    "task_checkpoint_list never returns a ghost entry from scheduled-tasks.js's files, even while a scheduled task exists"
+  );
+
+  // Regression: registering a task, deregistering, and re-registering
+  // MUST refuse a second register while the first is still live — found
+  // in commander review that /Create failing (no /F) left the FIRST
+  // task's prompt file already overwritten by the second register's
+  // prompt before /Create ever ran.
+  const originalPrompt = "This is a test scheduled task prompt, never actually meant to run meaningfully.";
+  let secondRegisterRejected = false;
+  try {
+    const r = await client.callTool({
+      name: "scheduled_task_register",
+      arguments: { name: taskName, prompt: "DIFFERENT prompt that must never land", model: "opencode/nemotron-3.5-lightning-free", schedule: { type: "ONCE", time: "23:59" } },
+    });
+    secondRegisterRejected = r.isError === true;
+  } catch {
+    secondRegisterRejected = true;
+  }
+  must(secondRegisterRejected, "scheduled_task_register refuses a second register of an already-existing task name");
+  const promptFile = path.join(root, "artifacts", "tasks", `${taskName}.prompt.txt`);
+  const { readFileSync } = await import("node:fs");
+  must(readFileSync(promptFile, "utf8") === originalPrompt, "the FIRST task's prompt file is untouched by the rejected second register");
 
   let badNameRejected = false;
   try {

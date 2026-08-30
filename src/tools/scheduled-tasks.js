@@ -16,7 +16,10 @@ export function registerScheduledTaskTools(server) {
         "tool can only create/list/delete tasks it namespaced itself, never touch an existing unrelated " +
         "scheduled task. Confirmed by measurement: a non-interactive opencode run auto-REJECTS any " +
         "ask-gated tool call (desktop_kill_process, browser_attach, etc.) — the same permission rules apply " +
-        "as an interactive run, just fail-closed instead of prompting. Gated by config permission (ask).",
+        "as an interactive run, just fail-closed instead of prompting. Gated by config permission (ask). " +
+        "CAUTION: this task will move the real mouse/keyboard and control real windows at the scheduled time, " +
+        "even while the user is actively using the PC — schedule it for a time the user won't be at the " +
+        "keyboard, not just \"whenever is convenient.\"",
       inputSchema: {
         name: z.string().describe('must start with "OpenCodeUpgrade-"'),
         prompt: z.string().describe("the instruction opencode run will execute, max 20000 chars"),

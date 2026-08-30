@@ -6,7 +6,7 @@
 // enforces "same rules as normal execution" for the one risk that matters
 // here — no separate unattended-mode guard was needed.
 import { spawn } from "node:child_process";
-import { mkdirSync, writeFileSync, readdirSync, existsSync, unlinkSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -42,8 +42,20 @@ export async function registerScheduledTask({ name, prompt, model, schedule }) {
   if (prompt.length > 20_000) throw new Error("prompt too long (20000 char cap) — a scheduled task's prompt should be a concise instruction, not a document");
 
   mkdirSync(TASKS_DIR, { recursive: true });
-  writeFileSync(path.join(TASKS_DIR, `${name}.prompt.txt`), prompt, "utf8");
-  writeFileSync(path.join(TASKS_DIR, `${name}.meta.json`), JSON.stringify({ model }, null, 2), "utf8");
+  const promptFile = path.join(TASKS_DIR, `${name}.prompt.txt`);
+  const metaFile = path.join(TASKS_DIR, `${name}.meta.json`);
+  // Found in commander review: writing these before /Create meant a
+  // same-named EXISTING task's prompt got silently overwritten even when
+  // /Create then failed (no /F, so the task itself wasn't touched, but its
+  // scheduled behavior was — the caller only sees the /Create error and
+  // has no idea the prompt file changed underneath it). Refuse up front
+  // instead, and if /Create still fails for some other reason, remove what
+  // we just wrote rather than leaving it orphaned.
+  if (existsSync(promptFile) || existsSync(metaFile)) {
+    throw new Error(`"${name}" already has saved prompt/meta files — delete it first (scheduled_task_delete) or choose a different name`);
+  }
+  writeFileSync(promptFile, prompt, "utf8");
+  writeFileSync(metaFile, JSON.stringify({ model }, null, 2), "utf8");
 
   const scArgs = ["/Create", "/TN", name, "/TR", `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${WRAPPER}" -TaskId "${name}"`];
   if (schedule.type === "DAILY") {
@@ -54,10 +66,19 @@ export async function registerScheduledTask({ name, prompt, model, schedule }) {
     scArgs.push("/SC", "ONCE", "/ST", schedule.time);
     if (schedule.date) scArgs.push("/SD", schedule.date);
   } else {
+    unlinkSync(promptFile);
+    unlinkSync(metaFile);
     throw new Error(`unknown schedule.type "${schedule.type}" (expected DAILY, HOURLY, or ONCE)`);
   }
 
-  const output = await runCommand("schtasks.exe", scArgs);
+  let output;
+  try {
+    output = await runCommand("schtasks.exe", scArgs);
+  } catch (e) {
+    unlinkSync(promptFile);
+    unlinkSync(metaFile);
+    throw e;
+  }
   return { name, registered: true, schedule, schtasksOutput: output.trim() };
 }
 

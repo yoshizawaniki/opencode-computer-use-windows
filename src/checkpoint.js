@@ -11,12 +11,16 @@ import { fileURLToPath } from "node:url";
 import { scrubKnownSecrets } from "./redaction.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const TASKS_DIR = path.join(ROOT, "..", "artifacts", "tasks");
+// Separate from artifacts/tasks/ (scheduled-tasks.js's directory) — found
+// in commander review: both used the SAME directory, so listCheckpoints'
+// ".json" filter also matched scheduled-tasks.js's <name>.meta.json files,
+// producing ghost entries with no real checkpoint fields.
+const CHECKPOINTS_DIR = path.join(ROOT, "..", "artifacts", "checkpoints");
 const MAX_SERIALIZED_CHARS = 50_000; // fail loud rather than silently accept a dumped transcript
 
 function checkpointFile(taskId) {
   if (!/^[A-Za-z0-9_-]+$/.test(taskId)) throw new Error("taskId must match [A-Za-z0-9_-]+");
-  return path.join(TASKS_DIR, `${taskId}.json`);
+  return path.join(CHECKPOINTS_DIR, `${taskId}.json`);
 }
 
 // Required fields enforce the design doc's list structurally — this is not
@@ -39,14 +43,14 @@ export function saveCheckpoint(taskId, fields) {
         "this is a checkpoint of STATE (phase/pending/refs), not a transcript; trim it rather than raising the cap"
     );
   }
-  mkdirSync(TASKS_DIR, { recursive: true });
+  mkdirSync(CHECKPOINTS_DIR, { recursive: true });
   writeFileSync(checkpointFile(taskId), serialized, "utf8");
   return { taskId, savedAt: record.savedAt, sizeChars: serialized.length };
 }
 
 export function loadCheckpoint(taskId) {
   const file = checkpointFile(taskId);
-  if (!existsSync(file)) throw new Error(`no checkpoint for task "${taskId}" (looked in ${TASKS_DIR})`);
+  if (!existsSync(file)) throw new Error(`no checkpoint for task "${taskId}" (looked in ${CHECKPOINTS_DIR})`);
   const record = JSON.parse(readFileSync(file, "utf8"));
   // Structural warning, not just prose: a window handle/pid/tab id saved
   // here can be reused by an unrelated process/tab by the time this loads
@@ -58,11 +62,15 @@ export function loadCheckpoint(taskId) {
 }
 
 export function listCheckpoints() {
-  mkdirSync(TASKS_DIR, { recursive: true });
-  return readdirSync(TASKS_DIR)
-    .filter((f) => f.endsWith(".json"))
-    .map((f) => {
-      const record = JSON.parse(readFileSync(path.join(TASKS_DIR, f), "utf8"));
-      return { taskId: record.taskId, phase: record.phase, savedAt: record.savedAt, pendingCount: record.pending?.length ?? 0 };
-    });
+  mkdirSync(CHECKPOINTS_DIR, { recursive: true });
+  const results = [];
+  for (const f of readdirSync(CHECKPOINTS_DIR).filter((f) => f.endsWith(".json"))) {
+    try {
+      const record = JSON.parse(readFileSync(path.join(CHECKPOINTS_DIR, f), "utf8"));
+      results.push({ taskId: record.taskId, phase: record.phase, savedAt: record.savedAt, pendingCount: record.pending?.length ?? 0 });
+    } catch {
+      // one corrupt file must not take down the whole listing
+    }
+  }
+  return results;
 }
