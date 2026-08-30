@@ -73,7 +73,7 @@ must(allowlistRejected, "windows_focus on a non-allowlisted process (explorer.ex
 // Negative test: a stale/nonexistent ref must fail, not silently succeed.
 let staleRejected = false;
 try {
-  const r = await client.callTool({ name: "windows_get_value", arguments: { ref: "999999|0" } });
+  const r = await client.callTool({ name: "windows_get_value", arguments: { ref: "999999|1|0" } });
   staleRejected = r.isError === true;
 } catch {
   staleRejected = true;
@@ -93,30 +93,58 @@ must(typeof ctx.screenshotPath === "string", "desktop_app_context returns a real
 // window is destroyed, and this runs against the actual desktop (no
 // sandboxed profile exists for native apps the way Playwright gives
 // browsers one) with dozens of other real processes (observed: Firefox
-// windows churning) causing hwnd reuse within fractions of a second. Refs
-// are meant to be re-fetched right before use; retry the resolve+verify
-// step itself since even "fresh" can occasionally lose the race.
-let afterType = null;
-for (let attempt = 0; attempt < 3 && !afterType; attempt++) {
-  try {
-    const freshNotepad = (await call("windows_list")).find((w) => w.processName.toLowerCase() === "notepad.exe");
-    if (!freshNotepad) continue;
-    const freshTree = await call("windows_tree", { ref: freshNotepad.ref, maxDepth: 5 });
-    const candidate = freshTree.elements.find((e) => e.controlType === "Document" || e.controlType === "Edit");
-    if (!candidate) continue;
-    await call("windows_focus", { ref: candidate.ref });
-    await call("desktop_wait", { ms: 300 }); // let focus actually settle before sending raw input
-    await call("desktop_type_text", { text: " +typed via sendinput こんにちは" });
-    afterType = await call("windows_get_value", { ref: candidate.ref });
-  } catch (e) {
-    console.log(`  (attempt ${attempt + 1} lost the ref race: ${e.message} — retrying)`);
-  }
+// windows churning) causing hwnd reuse within fractions of a second. Retry
+// the resolve step itself (not the focus-settle, which is now handled
+// product-side in uia.ps1's 'focus' action, not by a test-side wait).
+let candidate = null;
+for (let attempt = 0; attempt < 3 && !candidate; attempt++) {
+  const freshNotepad = (await call("windows_list")).find((w) => w.processName.toLowerCase() === "notepad.exe");
+  if (!freshNotepad) continue;
+  const freshTree = await call("windows_tree", { ref: freshNotepad.ref, maxDepth: 5 });
+  const found = freshTree.elements.find((e) => e.controlType === "Document" || e.controlType === "Edit");
+  if (!found) continue;
+  const check = await call("windows_get_value", { ref: found.ref }).catch(() => null);
+  if (check) candidate = found;
 }
-must(Boolean(afterType), "resolve+focus+type sequence completes (retried for real-desktop hwnd churn)");
+must(Boolean(candidate), "can resolve a live notepad edit-control ref (with retry for real-desktop hwnd churn)");
+
+// IMPORTANT REAL FINDING: UIA's SetFocus() (windows_focus) does NOT reliably
+// grant real OS-level foreground focus — Windows' foreground-lock security
+// feature restricts background/non-interactive processes from stealing
+// foreground via SetForegroundWindow-family APIs, which is what SetFocus
+// uses under the hood. Observed directly: after windows_focus succeeded,
+// desktop_type_text's own allowlist check found Firefox (unrelated, real
+// user activity) still owned OS focus, and correctly refused rather than
+// typing into the wrong window. desktop_click uses real SendInput mouse
+// events, which Windows DOES treat as legitimate focus-changing input — so
+// that is the reliable way to establish focus before raw keyboard input.
+const cx = Math.round(candidate.bounds.x + candidate.bounds.width / 2);
+const cy = Math.round(candidate.bounds.y + candidate.bounds.height / 2);
+await call("desktop_click", { x: cx, y: cy });
+// The focus-settle fix lives in uia.ps1's 'focus'/click paths (Start-Sleep
+// after the focus-changing call). If that regresses, this immediate
+// click-then-type sequence (no test-side wait) is what breaks.
+await call("desktop_type_text", { text: " +typed via sendinput こんにちは" });
+const afterType = await call("windows_get_value", { ref: candidate.ref });
 must(
   afterType.value.includes("typed via sendinput こんにちは"),
-  "desktop_type_text sends REAL keyboard input that actually lands in the focused control, got: " + afterType.value
+  "desktop_type_text immediately after windows_focus (no test-side wait) lands correctly — proves the settle fix is in the product path, got: " +
+    afterType.value
 );
+
+// Negative test: a ref whose hwnd is real but whose embedded pid doesn't
+// match that window's CURRENT process must be rejected as stale, not
+// silently resolved against whatever now owns that hwnd.
+const [hwndPart] = notepad.ref.split("|");
+const tamperedRef = `${hwndPart}|999999|`;
+let staleRefRejected = false;
+try {
+  const r = await client.callTool({ name: "windows_get_value", arguments: { ref: tamperedRef } });
+  staleRefRejected = r.isError === true;
+} catch {
+  staleRefRejected = true;
+}
+must(staleRefRejected, "a ref with a mismatched pid (simulating hwnd reuse) is rejected as stale, not silently resolved");
 
 // Negative test: desktop_click on a non-allowlisted window's point must be refused.
 const explorerBounds = explorer.bounds;

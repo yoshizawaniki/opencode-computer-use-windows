@@ -109,21 +109,37 @@ function Get-ChildrenList($Element) {
     return $children
 }
 
-# Single ref<->element resolver, used by every action. ref = "<hwnd>|<dot-separated
-# ControlView child indices>", e.g. "132456|2.0". No caching: UIA handles can't
-# cross process boundaries, so every call re-walks from AutomationElement.FromHandle.
+# ref = "<hwnd>|<pid>|<dot-separated ControlView child indices>", e.g. "132456|18280|2.0".
+# The embedded pid is what makes a stale ref detectable: HWNDs get reused by
+# Windows once a window is destroyed (observed on a live desktop within
+# fractions of a second — a stale ref silently resolved to an unrelated
+# process, e.g. Firefox, before this check existed). FromHandle succeeding is
+# NOT enough evidence the ref still points at the window it was issued for.
+function Make-Ref([long]$Hwnd, [int]$OwnerPid, [string]$Path) {
+    return "$Hwnd|$OwnerPid|$Path"
+}
+
+# Single ref<->element resolver, used by every action. No caching: UIA handles
+# can't cross process boundaries, so every call re-walks from FromHandle.
 function Resolve-Ref([string]$Ref) {
     if ([string]::IsNullOrEmpty($Ref)) { throw "ref is required" }
-    $parts = $Ref.Split('|', 2)
-    if ($parts.Count -lt 2) { throw "Invalid ref format (expected 'hwnd|path'): $Ref" }
+    $parts = $Ref.Split('|', 3)
+    if ($parts.Count -lt 3) { throw "Invalid ref format (expected 'hwnd|pid|path'): $Ref" }
     $hwndStr = $parts[0]
-    $path = $parts[1]
+    $pidStr = $parts[1]
+    $path = $parts[2]
     $hwndNum = 0L
     if (-not [int64]::TryParse($hwndStr, [ref]$hwndNum)) { throw "Invalid hwnd in ref: $hwndStr" }
+    $expectedPid = 0
+    if (-not [int]::TryParse($pidStr, [ref]$expectedPid)) { throw "Invalid pid in ref: $pidStr" }
 
     $root = $null
     try { $root = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$hwndNum) } catch { $root = $null }
     if ($null -eq $root) { throw "Window not found for hwnd $hwndStr (it may have closed)" }
+    $actualPid = $root.Current.ProcessId
+    if ($actualPid -ne $expectedPid) {
+        throw "ref is stale: hwnd $hwndStr was reused (issued for pid $expectedPid, now belongs to pid $actualPid). Re-fetch via windows_list/windows_tree."
+    }
 
     $element = $root
     if ($path -ne '') {
@@ -138,7 +154,7 @@ function Resolve-Ref([string]$Ref) {
             $element = $child
         }
     }
-    return @{ Element = $element; Hwnd = $hwndNum }
+    return @{ Element = $element; Hwnd = $hwndNum; Pid = $expectedPid }
 }
 
 function Get-ControlTypeByName([string]$Name) {
@@ -224,7 +240,7 @@ function ConvertTo-ElementJson($Element, [string]$Ref) {
 # $Limit results and a hard node-visit safety cap so a huge tree can't hang the call.
 function Find-Elements([string]$Ref, $AutomationId, $Name, $ControlType, [int]$Limit) {
     $resolved = Resolve-Ref $Ref
-    $basePath = ($Ref.Split('|', 2))[1]
+    $basePath = ($Ref.Split('|', 3))[2]
     $ctObj = $null
     if ($ControlType) { $ctObj = Get-ControlTypeByName $ControlType }
 
@@ -253,7 +269,7 @@ function Find-Elements([string]$Ref, $AutomationId, $Name, $ControlType, [int]$L
         if ($isMatch -and $Name -and $cur.Name -ne $Name) { $isMatch = $false }
         if ($isMatch -and $ctObj -and $cur.ControlType -ne $ctObj) { $isMatch = $false }
         if ($isMatch) {
-            $refStr = "$($resolved.Hwnd)|$($item.Path)"
+            $refStr = Make-Ref -Hwnd $resolved.Hwnd -OwnerPid $resolved.Pid -Path $item.Path
             $results += (ConvertTo-ElementJson -Element $el -Ref $refStr)
         }
 
@@ -318,7 +334,7 @@ try {
                 if ($cur.IsOffscreen) { continue }
                 if ($rect.IsEmpty -or $rect.Width -le 0 -or $rect.Height -le 0) { continue }
                 $hwnd = $cur.NativeWindowHandle
-                $list += (ConvertTo-ElementJson -Element $w -Ref "$hwnd|")
+                $list += (ConvertTo-ElementJson -Element $w -Ref (Make-Ref -Hwnd $hwnd -OwnerPid $cur.ProcessId -Path ''))
             }
             $data = $list
         }
@@ -338,7 +354,7 @@ try {
                 }
                 $hwnd = $current.Current.NativeWindowHandle
                 if ($hwnd -ne 0) {
-                    $data = ConvertTo-ElementJson -Element $current -Ref "$hwnd|"
+                    $data = ConvertTo-ElementJson -Element $current -Ref (Make-Ref -Hwnd $hwnd -OwnerPid $current.Current.ProcessId -Path '')
                 }
             }
         }
@@ -347,14 +363,14 @@ try {
             $resolved = Resolve-Ref $req.ref
             $maxDepth = if ($null -ne $req.maxDepth) { [int]$req.maxDepth } else { 4 }
             $maxNodes = if ($null -ne $req.maxNodes) { [int]$req.maxNodes } else { 200 }
-            $basePath = ($req.ref.Split('|', 2))[1]
+            $basePath = ($req.ref.Split('|', 3))[2]
 
             $elements = @()
             $queue = New-Object System.Collections.Generic.Queue[object]
             $queue.Enqueue(@{ Element = $resolved.Element; Path = $basePath; Depth = 0 })
             while ($queue.Count -gt 0 -and $elements.Count -lt $maxNodes) {
                 $item = $queue.Dequeue()
-                $refStr = "$($resolved.Hwnd)|$($item.Path)"
+                $refStr = Make-Ref -Hwnd $resolved.Hwnd -OwnerPid $resolved.Pid -Path $item.Path
                 $j = ConvertTo-ElementJson -Element $item.Element -Ref $refStr
                 $j['depth'] = $item.Depth
                 $elements += $j
@@ -441,6 +457,12 @@ try {
         'focus' {
             $resolved = Resolve-Ref $req.ref
             $resolved.Element.SetFocus()
+            # SetFocus() returns before the OS has actually committed the
+            # focus change — sending raw input (desktop_type_text/key) right
+            # after this returns can land on the PREVIOUS focus target and
+            # silently lose most of the input. Observed in practice: only
+            # the first 2-3 characters of a typed string landed without this.
+            Start-Sleep -Milliseconds 200
             $resolved2 = Resolve-Ref $req.ref
             $data = ConvertTo-ElementJson -Element $resolved2.Element -Ref $req.ref
         }
@@ -463,7 +485,7 @@ try {
                     $current = $parent
                 }
                 $hwnd = $current.Current.NativeWindowHandle
-                if ($hwnd -ne 0) { $data = ConvertTo-ElementJson -Element $current -Ref "$hwnd|" }
+                if ($hwnd -ne 0) { $data = ConvertTo-ElementJson -Element $current -Ref (Make-Ref -Hwnd $hwnd -OwnerPid $current.Current.ProcessId -Path '') }
             }
         }
 
@@ -502,7 +524,7 @@ try {
             }
             $hwnd = $current.Current.NativeWindowHandle
             if ($hwnd -eq 0) { throw "No active window" }
-            $winData = ConvertTo-ElementJson -Element $current -Ref "$hwnd|"
+            $winData = ConvertTo-ElementJson -Element $current -Ref (Make-Ref -Hwnd $hwnd -OwnerPid $current.Current.ProcessId -Path '')
             $rect = $current.Current.BoundingRectangle
             if (-not $rect.IsEmpty -and $rect.Width -gt 0 -and $rect.Height -gt 0) {
                 Save-ScreenRegion -X ([int][math]::Round($rect.X)) -Y ([int][math]::Round($rect.Y)) -W ([int][math]::Round($rect.Width)) -H ([int][math]::Round($rect.Height)) -SavePath $req.savePath
@@ -551,6 +573,12 @@ try {
                 }
                 default { throw "Unknown button: $button" }
             }
+            # A real click is the reliable way to move OS-level foreground
+            # focus (unlike UIA SetFocus, which Windows' foreground-lock can
+            # silently ignore for a background caller) — but the OS still
+            # needs a moment to commit that focus change before raw
+            # keyboard input sent right after this returns will land here.
+            Start-Sleep -Milliseconds 150
             $data = @{ clicked = $true; x = $x; y = $y; button = $button }
         }
 

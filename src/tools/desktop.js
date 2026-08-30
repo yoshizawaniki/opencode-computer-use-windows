@@ -116,7 +116,13 @@ export function registerDesktopTools(server) {
     "desktop_type_text",
     {
       title: "Type text via keyboard input",
-      description: "Sends the given text as real keyboard input (SendInput, not window-message injection) to whatever currently has focus. Refuses if the focused window isn't allowlisted.",
+      description:
+        "Sends the given text as real keyboard input (SendInput, not window-message injection) to whatever " +
+        "currently has OS-level focus. Refuses if that window isn't allowlisted. NOTE: windows_focus (UIA " +
+        "SetFocus) sets logical focus within an app but does not guarantee that app becomes the OS foreground " +
+        "window SendInput targets — if another window is genuinely focused at the OS level, this call is " +
+        "correctly refused rather than typing into the wrong place. Prefer windows_set_value when the target " +
+        "supports it; it doesn't depend on OS-level focus at all.",
       inputSchema: { text: z.string() },
     },
     async ({ text: value }) => {
