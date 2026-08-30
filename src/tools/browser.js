@@ -19,8 +19,20 @@ import {
   getMode,
 } from "../browser-session.js";
 import { snapshot, locatorFor } from "../snapshot.js";
+import { resolveSecret } from "../secret-broker.js";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import path from "node:path";
+
+// Small, dependency-free extension->MIME guess for the Download Manager's
+// "MIME / type" field (design doc) — not a full sniffing library, just
+// enough for the common cases a download typically is.
+const MIME_BY_EXTENSION = {
+  ".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+  ".gif": "image/gif", ".csv": "text/csv", ".json": "application/json", ".txt": "text/plain",
+  ".html": "text/html", ".zip": "application/zip", ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+};
 
 // Contract: every mutating tool (navigate/click/type/tab switch/etc.)
 // re-observes the page after acting and returns the *actual resulting
@@ -150,6 +162,28 @@ export function registerBrowserTools(server) {
   );
 
   server.registerTool(
+    "browser_secret_fill",
+    {
+      title: "Fill a field with a registered secret (Secret Broker)",
+      description:
+        "Fills the element at `ref` with a secret value resolved by NAME from the local Secret Broker — the " +
+        "actual value is never returned to you and never appears in this tool's result. Secrets must be " +
+        "pre-registered by the user via `scripts/secret-cli.ps1 -Action register` (there is no Tool that can " +
+        "write a secret value). Refuses if the active page's origin doesn't match the secret's registered " +
+        "scope. Use this instead of browser_type for passwords/API keys/tokens.",
+      inputSchema: { ref: z.string(), name: z.string().describe("registered secret name") },
+    },
+    async ({ ref, name }) => {
+      const page = await getActivePage();
+      const origin = new URL(page.url()).origin;
+      const value = await resolveSecret(name, origin);
+      await locatorFor(page, ref).fill(value, { timeout: 5000 });
+      const result = await observedState(page, `secret_fill:${ref}=${name}`);
+      return text({ ...result, filledLength: value.length });
+    }
+  );
+
+  server.registerTool(
     "browser_select",
     {
       title: "Select a dropdown option",
@@ -262,6 +296,7 @@ export function registerBrowserTools(server) {
         action: `download:${ref}`,
         path: file,
         sizeBytes: buf.length,
+        mimeGuess: MIME_BY_EXTENSION[path.extname(file).toLowerCase()] ?? "application/octet-stream",
         sha256: createHash("sha256").update(buf).digest("hex"),
       });
     }

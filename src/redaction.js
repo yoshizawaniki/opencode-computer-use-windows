@@ -37,3 +37,29 @@ export const SPLIT_PATTERN_SOURCE = "([a-z0-9])([A-Z])";
 export function splitIdentifierWords(name) {
   return String(name ?? "").replace(new RegExp(SPLIT_PATTERN_SOURCE, "g"), "$1 $2");
 }
+
+// Value-based scrubbing, separate from the name-based redaction above: this
+// catches a secret AFTER secret-broker.js resolves it (e.g. via
+// browser_secret_fill), regardless of which tool's output would otherwise
+// echo it back — a read-back through browser_snapshot, browser_dom_query,
+// visual OCR, or any future reader. Name-based redaction alone can't cover
+// this because those readers don't know a given field was just filled from
+// a secret. Every MCP tool result is scrubbed at the server.js choke point
+// before it leaves the process, so new tools inherit this for free.
+const knownSecretValues = new Set();
+
+export function registerSecretValue(value) {
+  if (typeof value === "string" && value.length >= 4) knownSecretValues.add(value);
+}
+
+export function scrubKnownSecrets(x) {
+  if (knownSecretValues.size === 0) return x;
+  if (typeof x === "string") {
+    let out = x;
+    for (const secret of knownSecretValues) out = out.split(secret).join("<redacted-secret>");
+    return out;
+  }
+  if (Array.isArray(x)) return x.map(scrubKnownSecrets);
+  if (x && typeof x === "object") return Object.fromEntries(Object.entries(x).map(([k, v]) => [k, scrubKnownSecrets(v)]));
+  return x;
+}

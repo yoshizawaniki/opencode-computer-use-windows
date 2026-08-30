@@ -2,6 +2,7 @@ import { z } from "zod";
 import { callUia } from "../uia.js";
 import { assertProcessAllowed } from "../allowlist.js";
 import { artifactPath } from "../browser-session.js";
+import { resolveSecret } from "../secret-broker.js";
 
 function text(obj) {
   return { content: [{ type: "text", text: typeof obj === "string" ? obj : JSON.stringify(obj, null, 2) }] };
@@ -139,6 +140,27 @@ export function registerDesktopTools(server) {
     async ({ text: value }) => {
       await assertFocusAllowed();
       return text(await callUia({ action: "type_text", text: value }));
+    }
+  );
+
+  server.registerTool(
+    "desktop_secret_type",
+    {
+      title: "Type a registered secret via keyboard input (Secret Broker)",
+      description:
+        "Resolves a secret by NAME from the local Secret Broker and sends it as real keyboard input " +
+        "(SendInput) to whatever currently has OS-level focus — the actual value is never returned to you. " +
+        "Secrets must be pre-registered via `scripts/secret-cli.ps1 -Action register`, bound to a process " +
+        "name (e.g. \"notepad.exe\"). Refuses if the focused window's process doesn't match that scope, or " +
+        "isn't in the window allowlist. Same OS-focus caveat as desktop_type_text: click the target field " +
+        "first with desktop_click.",
+      inputSchema: { name: z.string().describe("registered secret name") },
+    },
+    async ({ name }) => {
+      const win = await assertFocusAllowed();
+      const value = await resolveSecret(name, win?.processName);
+      const result = await callUia({ action: "type_text", text: value });
+      return text({ ...result, secretName: name });
     }
   );
 

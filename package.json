@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node tests/redaction-pattern.test.mjs && node tests/smoke.mjs && node tests/uia-smoke.mjs && node tests/attach-smoke.mjs"
+    "test": "node tests/redaction-pattern.test.mjs && node tests/secret-broker.test.mjs && node tests/smoke.mjs && node tests/uia-smoke.mjs && node tests/attach-smoke.mjs"
   },
   "keywords": [],
   "author": "",

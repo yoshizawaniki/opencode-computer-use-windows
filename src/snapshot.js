@@ -4,6 +4,7 @@
 import { SENSITIVE_NAME_PATTERN, SPLIT_PATTERN_SOURCE } from "./redaction.js";
 
 let currentRefs = new Set();
+let lastElementInfo = new Map(); // ref -> {role, name}, for Record & Replay target descriptors
 let generation = 0;
 
 const INTERACTIVE_SELECTOR =
@@ -26,14 +27,15 @@ export async function snapshot(page) {
       // from redaction.js via args, not a hand-copied literal.
       const splitRe = new RegExp(splitPattern, "g");
       const splitWords = (s) => String(s || "").replace(splitRe, "$1 $2");
-      const inputValue = (el) => {
-        if (el.tagName !== "INPUT") return "";
-        const isSensitive =
-          el.type === "password" ||
+      const isSensitiveInput = (el) =>
+        el.tagName === "INPUT" &&
+        (el.type === "password" ||
           sensitiveRe.test(splitWords(el.name)) ||
           sensitiveRe.test(splitWords(el.id)) ||
-          sensitiveRe.test(splitWords(el.getAttribute("aria-label")));
-        if (isSensitive) return el.value ? `<redacted, length=${el.value.length}>` : "";
+          sensitiveRe.test(splitWords(el.getAttribute("aria-label"))));
+      const inputValue = (el) => {
+        if (el.tagName !== "INPUT") return "";
+        if (isSensitiveInput(el)) return el.value ? `<redacted, length=${el.value.length}>` : "";
         return el.value || "";
       };
       const accessibleName = (el) =>
@@ -51,7 +53,7 @@ export async function snapshot(page) {
       const elements = nodes.map((el, i) => {
         const ref = `${gen}-${i}`;
         el.setAttribute("data-oc-ref", ref);
-        return { ref, role: roleOf(el), name: accessibleName(el) };
+        return { ref, role: roleOf(el), name: accessibleName(el), sensitive: isSensitiveInput(el) };
       });
       return { elements, truncated: all.length > max };
     },
@@ -59,6 +61,7 @@ export async function snapshot(page) {
   );
 
   currentRefs = new Set(elements.map((e) => e.ref));
+  lastElementInfo = new Map(elements.map((e) => [e.ref, { role: e.role, name: e.name, sensitive: e.sensitive }]));
   const url = page.url();
   const title = await page.title();
   let text = elements.map((e) => `[${e.ref}] ${e.role} "${e.name}"`).join("\n");
@@ -77,4 +80,27 @@ export function assertFreshRef(ref) {
 export function locatorFor(page, ref) {
   assertFreshRef(ref);
   return page.locator(`[data-oc-ref="${ref}"]`);
+}
+
+// role+name descriptor for the given ref, as of the most recent snapshot() —
+// used by workflow.js to record a semantic (not raw-ref) target, since refs
+// are regenerated every snapshot and can't be replayed later as-is.
+export function elementInfoFor(ref) {
+  return lastElementInfo.get(ref) ?? null;
+}
+
+// Finds the ref (from the CURRENT tracked snapshot) whose role+name best
+// matches a recorded descriptor — the resolution step Record & Replay needs
+// at replay time, when the original ref no longer exists. Exact match first,
+// falling back to name-only (role can drift, e.g. a generic [onclick] div
+// picked up as a different role after a page redesign) — an ambiguous match
+// (>1 candidate) is refused rather than silently picking one.
+export function resolveRefByDescriptor({ role, name }) {
+  const exact = [...lastElementInfo.entries()].filter(([, v]) => v.role === role && v.name === name);
+  if (exact.length === 1) return exact[0][0];
+  if (exact.length > 1) throw new Error(`ambiguous target: ${exact.length} elements match role="${role}" name="${name}"`);
+  const byName = [...lastElementInfo.entries()].filter(([, v]) => v.name === name);
+  if (byName.length === 1) return byName[0][0];
+  if (byName.length > 1) throw new Error(`ambiguous target: ${byName.length} elements match name="${name}" (role changed from "${role}")`);
+  throw new Error(`no element on the current page matches recorded target role="${role}" name="${name}" — call browser_snapshot to see what's there now`);
 }

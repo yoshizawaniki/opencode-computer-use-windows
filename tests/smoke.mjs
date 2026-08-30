@@ -5,7 +5,8 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { pathToFileURL } from "node:url";
 import path from "node:path";
 import http from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { spawn as spawnProc } from "node:child_process";
 
 const root = path.resolve(import.meta.dirname, "..");
 const fixtureUrl = pathToFileURL(path.join(root, "tests", "fixtures", "basic.html")).href;
@@ -51,6 +52,66 @@ must(
   "browser_snapshot redacts a camelCase-named sensitive field (name=\"sessionKey\"), not just type=password"
 );
 must(/redacted, length=23/.test(navState.snapshot), "the sessionKey field's real length is still surfaced, just not the value");
+
+// Secret Broker e2e: register a secret bound to this fixture's origin,
+// fill it via browser_secret_fill into a PLAIN (non-password, non
+// sensitive-named) field, then confirm the value never surfaces through
+// browser_snapshot even though name-based redaction alone would never catch
+// "#box" — this is what proves the value-based scrub in server.js/
+// redaction.js works, not just the name-based check already covered above.
+// file:// pages all share origin "null" (WHATWG spec), which is what
+// assertNavigateAllowed's file:// project-root scoping already relies on to
+// keep this usable for local test fixtures.
+if (process.platform === "win32") {
+  function runSecretCli(args, stdinText) {
+    return new Promise((resolve, reject) => {
+      const child = spawnProc(
+        "powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(root, "scripts", "secret-cli.ps1"), ...args],
+        { cwd: root }
+      );
+      let out = "", err = "";
+      child.stdout.on("data", (d) => (out += d));
+      child.stderr.on("data", (d) => (err += d));
+      child.on("exit", (code) => (code === 0 ? resolve(out) : reject(new Error(err || out))));
+      if (stdinText !== undefined) child.stdin.write(stdinText + "\n");
+      child.stdin.end();
+    });
+  }
+
+  const SECRET = "SmokeTestSecretValueXYZ789";
+  await runSecretCli(["-Action", "register", "-Name", "oc-smoke-secret", "-Scope", "null"], SECRET);
+  try {
+    const fillSnap = await client.callTool({ name: "browser_snapshot", arguments: {} });
+    const boxRef = JSON.parse(fillSnap.content[0].text).snapshot.match(/\[([\d-]+)\] input "type here"/)?.[1];
+    must(boxRef, "snapshot exposes a ref for the plain #box input");
+
+    const fill = await client.callTool({ name: "browser_secret_fill", arguments: { ref: boxRef, name: "oc-smoke-secret" } });
+    const fillResult = JSON.parse(fill.content[0].text);
+    must(!JSON.stringify(fillResult).includes(SECRET), "browser_secret_fill's own return value never contains the secret value");
+    must(fillResult.filledLength === SECRET.length, "browser_secret_fill reports the filled length, not the value");
+
+    const afterFill = await client.callTool({ name: "browser_snapshot", arguments: {} });
+    must(
+      !JSON.stringify(afterFill).includes(SECRET),
+      "browser_snapshot never echoes a secret-filled value back, even for a field with no sensitive name/type"
+    );
+
+    let scopeMismatchThrew = false;
+    try {
+      await client.callTool({ name: "browser_secret_fill", arguments: { ref: boxRef, name: "oc-smoke-secret-wrong-scope-does-not-exist" } });
+    } catch {
+      scopeMismatchThrew = true;
+    }
+    if (!scopeMismatchThrew) {
+      const badFill = await client.callTool({ name: "browser_secret_fill", arguments: { ref: boxRef, name: "oc-smoke-secret-wrong-scope-does-not-exist" } });
+      scopeMismatchThrew = badFill.isError === true;
+    }
+    must(scopeMismatchThrew, "browser_secret_fill refuses an unregistered secret name");
+  } finally {
+    await runSecretCli(["-Action", "remove", "-Name", "oc-smoke-secret"]);
+  }
+}
 
 const snap = await client.callTool({ name: "browser_snapshot", arguments: {} });
 const snapText = JSON.parse(snap.content[0].text).snapshot;
@@ -289,6 +350,101 @@ const diff = JSON.parse((await client.callTool({ name: "browser_screenshot_diff"
 must(diff.changed === true, `browser_screenshot_diff detects a real small UI change on a full-page screenshot, got diffRatio=${diff.diffRatio}`);
 const same = JSON.parse((await client.callTool({ name: "browser_screenshot_diff", arguments: { beforePath: after, afterPath: after } })).content[0].text);
 must(same.changed === false, "browser_screenshot_diff reports no change when comparing identical screenshots");
+
+// Record & Replay e2e: record click(Go) + type(#box), edit the typed value
+// into a "${msg}" placeholder, replay against a freshly-reloaded page (so
+// the ORIGINAL refs are gone) with a different value, and confirm the
+// replayed result reflects the real post-action state — not just that
+// replay "ran".
+await client.callTool({ name: "browser_navigate", arguments: { url: fixtureUrl } });
+await client.callTool({ name: "workflow_record_start", arguments: { name: "smoke-wf" } });
+
+const wfSnap1 = JSON.parse((await client.callTool({ name: "browser_snapshot", arguments: {} })).content[0].text);
+const wfGoRef = wfSnap1.snapshot.match(/\[([\d-]+)\] button "Go"/)[1];
+await client.callTool({ name: "browser_click", arguments: { ref: wfGoRef } });
+
+const wfSnap2 = JSON.parse((await client.callTool({ name: "browser_snapshot", arguments: {} })).content[0].text);
+const wfBoxRef = wfSnap2.snapshot.match(/\[([\d-]+)\] input "type here"/)[1];
+await client.callTool({ name: "browser_type", arguments: { ref: wfBoxRef, text: "literal-hello" } });
+
+const stopped = JSON.parse((await client.callTool({ name: "workflow_record_stop", arguments: {} })).content[0].text);
+must(stopped.stepCount === 2, `workflow_record_stop captured exactly 2 steps, got ${stopped.stepCount}`);
+
+const preview = JSON.parse((await client.callTool({ name: "workflow_preview", arguments: { name: "smoke-wf" } })).content[0].text);
+must(preview.steps[0].tool === "browser_click" && preview.steps[0].target?.role === "button" && preview.steps[0].target?.name === "Go", "recorded step 1 stores a semantic (role+name) target for the Go button, not a raw ref");
+must(preview.steps[1].tool === "browser_type" && preview.steps[1].args.text === "literal-hello", "recorded step 2 stores the typed literal value");
+must(!("ref" in preview.steps[1].args), "recorded step's args no longer carry the (now-stale-prone) raw ref");
+
+const parameterized = JSON.parse(JSON.stringify(preview.steps));
+parameterized[1].args.text = "${msg}";
+const edited = JSON.parse((await client.callTool({ name: "workflow_edit", arguments: { name: "smoke-wf", stepsJson: JSON.stringify(parameterized) } })).content[0].text);
+must(edited.stepCount === 2, "workflow_edit saves the parameterized steps");
+
+// Reset the page so the ORIGINAL refs from recording are gone entirely —
+// replay must resolve targets against THIS fresh state via role+name, not
+// reuse anything from the recording.
+await client.callTool({ name: "browser_navigate", arguments: { url: fixtureUrl } });
+const replayed = JSON.parse((await client.callTool({ name: "workflow_replay", arguments: { name: "smoke-wf", params: { msg: "parameterized-value" } } })).content[0].text);
+must(replayed.steps[0].result.snapshot.includes('button "Clicked!"'), "replayed click step produces the real post-click DOM state");
+must(replayed.steps[1].result.actualValue === "parameterized-value", `replayed type step used the SUBSTITUTED param, got "${replayed.steps[1].result.actualValue}"`);
+
+await client.callTool({ name: "workflow_delete", arguments: { name: "smoke-wf" } });
+const afterDelete = JSON.parse((await client.callTool({ name: "workflow_list", arguments: {} })).content[0].text);
+must(!afterDelete.some((w) => w.name === "smoke-wf"), "workflow_delete actually removes the saved workflow");
+
+// Recording must never write a sensitive field's literal value to disk —
+// typing into the fixture's password field gets flagged, not saved verbatim.
+await client.callTool({ name: "browser_navigate", arguments: { url: fixtureUrl } });
+await client.callTool({ name: "workflow_record_start", arguments: { name: "smoke-wf-secret" } });
+const wfSnap3 = JSON.parse((await client.callTool({ name: "browser_snapshot", arguments: {} })).content[0].text);
+const pwdRef = wfSnap3.snapshot.match(/\[([\d-]+)\] input "<redacted, length=22>"/)[1];
+await client.callTool({ name: "browser_type", arguments: { ref: pwdRef, text: "PlaintextPasswordNeverSaved987" } });
+const stoppedSecret = JSON.parse((await client.callTool({ name: "workflow_record_stop", arguments: {} })).content[0].text);
+must(stoppedSecret.requiresManualEdit === true, "recording a type-into-password step is flagged requiresManualEdit");
+const previewSecret = JSON.parse((await client.callTool({ name: "workflow_preview", arguments: { name: "smoke-wf-secret" } })).content[0].text);
+must(!previewSecret.text.includes("PlaintextPasswordNeverSaved987"), "the recorded workflow file never contains the plaintext typed into a password field");
+let replayThrew = false;
+try {
+  await client.callTool({ name: "workflow_replay", arguments: { name: "smoke-wf-secret", params: {} } });
+} catch {
+  replayThrew = true;
+}
+if (!replayThrew) {
+  const r = await client.callTool({ name: "workflow_replay", arguments: { name: "smoke-wf-secret", params: {} } });
+  replayThrew = r.isError === true;
+}
+must(replayThrew, "replaying a workflow with an unresolved requiresManualEdit step is refused, not silently skipped");
+await client.callTool({ name: "workflow_delete", arguments: { name: "smoke-wf-secret" } });
+
+// Clipboard: metadata-only by default, real value opt-in, write round-trips.
+if (process.platform === "win32") {
+  const CLIP_TEXT = "opencode-clipboard-smoke-test-98765";
+  await client.callTool({ name: "clipboard_write", arguments: { text: CLIP_TEXT } });
+  const readDefault = JSON.parse((await client.callTool({ name: "clipboard_read", arguments: {} })).content[0].text);
+  must(readDefault.length === CLIP_TEXT.length, `clipboard_read reports the real length by default, got ${readDefault.length}`);
+  must(!("value" in readDefault), "clipboard_read omits the raw value by default");
+  const readValue = JSON.parse((await client.callTool({ name: "clipboard_read", arguments: { includeValue: true } })).content[0].text);
+  must(readValue.value === CLIP_TEXT, "clipboard_read with includeValue:true returns the real value that was written");
+}
+
+// Artifact preview: text content returned inline, path scoping enforced.
+const previewDir = path.join(root, "artifacts", "screenshots");
+await mkdir(previewDir, { recursive: true });
+const previewFile = path.join(previewDir, "preview-smoke.html");
+await writeFile(previewFile, "<html><body>artifact preview smoke test</body></html>", "utf8");
+const artifactPreview = JSON.parse((await client.callTool({ name: "artifact_preview", arguments: { filePath: previewFile } })).content[0].text);
+must(artifactPreview.kind === "text" && artifactPreview.preview.includes("artifact preview smoke test"), "artifact_preview returns real HTML content inline");
+let previewRejected = false;
+try {
+  await client.callTool({ name: "artifact_preview", arguments: { filePath: path.join(root, "package.json") } });
+} catch {
+  previewRejected = true;
+}
+if (!previewRejected) {
+  const r = await client.callTool({ name: "artifact_preview", arguments: { filePath: path.join(root, "package.json") } });
+  previewRejected = r.isError === true;
+}
+must(previewRejected, "artifact_preview refuses a path outside artifacts/");
 
 httpServer.close();
 

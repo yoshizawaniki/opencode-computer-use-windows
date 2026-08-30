@@ -7,15 +7,48 @@ import { registerDevtoolsTools } from "./tools/devtools.js";
 import { registerVisualTools } from "./tools/visual.js";
 import { registerWindowsTools } from "./tools/windows.js";
 import { registerDesktopTools } from "./tools/desktop.js";
+import { registerWorkflowTools } from "./tools/workflow.js";
+import { registerClipboardTools } from "./tools/clipboard.js";
+import { registerNotifyTools } from "./tools/notify.js";
+import { registerArtifactPreviewTools } from "./tools/artifact-preview.js";
 import { closeSession } from "./browser-session.js";
+import { scrubKnownSecrets } from "./redaction.js";
+import { registerHandler } from "./tool-registry.js";
+import { recordStep, captureBrowserTarget } from "./workflow.js";
 
 const server = new McpServer({ name: "opencode-computer-use", version: "0.1.0" });
+
+// Single choke point for (a) value-based secret scrubbing (see
+// redaction.js) and (b) Record & Replay step capture (see workflow.js):
+// wrap every tool's handler once here rather than touching each of the ~65
+// tool call sites in tools/*.js. Also registers the (post-scrub) handler
+// into tool-registry.js so workflow_replay can dispatch a tool call without
+// a real MCP round-trip.
+const registerTool = server.registerTool.bind(server);
+server.registerTool = (name, meta, handler) => {
+  const wrapped = async (...callArgs) => {
+    // Must run BEFORE the handler: a click can change the very name
+    // ("Go" -> "Clicked!") this needs, and the handler's own re-snapshot
+    // would otherwise overwrite it first (see workflow.js).
+    const preCapturedBrowserInfo = captureBrowserTarget(name, callArgs[0] ?? {});
+    const result = await handler(...callArgs);
+    const scrubbed = scrubKnownSecrets(result);
+    await recordStep(name, callArgs[0] ?? {}, preCapturedBrowserInfo);
+    return scrubbed;
+  };
+  registerHandler(name, wrapped);
+  return registerTool(name, meta, wrapped);
+};
 
 registerBrowserTools(server);
 registerDevtoolsTools(server);
 registerVisualTools(server);
 registerWindowsTools(server);
 registerDesktopTools(server);
+registerWorkflowTools(server);
+registerClipboardTools(server);
+registerNotifyTools(server);
+registerArtifactPreviewTools(server);
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
