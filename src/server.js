@@ -5,6 +5,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { registerBrowserTools } from "./tools/browser.js";
 import { registerDevtoolsTools } from "./tools/devtools.js";
 import { registerVisualTools } from "./tools/visual.js";
+import { registerWindowsTools } from "./tools/windows.js";
+import { registerDesktopTools } from "./tools/desktop.js";
 import { closeSession } from "./browser-session.js";
 
 const server = new McpServer({ name: "opencode-computer-use", version: "0.1.0" });
@@ -12,6 +14,8 @@ const server = new McpServer({ name: "opencode-computer-use", version: "0.1.0" }
 registerBrowserTools(server);
 registerDevtoolsTools(server);
 registerVisualTools(server);
+registerWindowsTools(server);
+registerDesktopTools(server);
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
