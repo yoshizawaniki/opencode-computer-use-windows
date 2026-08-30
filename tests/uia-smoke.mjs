@@ -80,8 +80,88 @@ try {
 }
 must(staleRejected, "windows_get_value on a nonexistent hwnd is reported as a real failure");
 
-// desktop_* (Phase 4) tools are covered by tests/desktop-smoke.mjs once
-// uia.ps1's Phase 4 actions exist.
+// --- Phase 4: desktop_* tools (screenshot / input / app lifecycle) -------
+
+const desktopShot = await call("desktop_screenshot", { ref: notepad.ref });
+must(typeof desktopShot.path === "string" && desktopShot.path.endsWith(".png"), "desktop_screenshot returns a real file path");
+
+const ctx = await call("desktop_app_context");
+must(typeof ctx.screenshotPath === "string", "desktop_app_context returns a real screenshot path alongside window info");
+
+// Re-resolve fresh — a ref from many steps/seconds ago on a REAL, live
+// desktop is not guaranteed to still be valid: HWNDs get reused once a
+// window is destroyed, and this runs against the actual desktop (no
+// sandboxed profile exists for native apps the way Playwright gives
+// browsers one) with dozens of other real processes (observed: Firefox
+// windows churning) causing hwnd reuse within fractions of a second. Refs
+// are meant to be re-fetched right before use; retry the resolve+verify
+// step itself since even "fresh" can occasionally lose the race.
+let afterType = null;
+for (let attempt = 0; attempt < 3 && !afterType; attempt++) {
+  try {
+    const freshNotepad = (await call("windows_list")).find((w) => w.processName.toLowerCase() === "notepad.exe");
+    if (!freshNotepad) continue;
+    const freshTree = await call("windows_tree", { ref: freshNotepad.ref, maxDepth: 5 });
+    const candidate = freshTree.elements.find((e) => e.controlType === "Document" || e.controlType === "Edit");
+    if (!candidate) continue;
+    await call("windows_focus", { ref: candidate.ref });
+    await call("desktop_wait", { ms: 300 }); // let focus actually settle before sending raw input
+    await call("desktop_type_text", { text: " +typed via sendinput こんにちは" });
+    afterType = await call("windows_get_value", { ref: candidate.ref });
+  } catch (e) {
+    console.log(`  (attempt ${attempt + 1} lost the ref race: ${e.message} — retrying)`);
+  }
+}
+must(Boolean(afterType), "resolve+focus+type sequence completes (retried for real-desktop hwnd churn)");
+must(
+  afterType.value.includes("typed via sendinput こんにちは"),
+  "desktop_type_text sends REAL keyboard input that actually lands in the focused control, got: " + afterType.value
+);
+
+// Negative test: desktop_click on a non-allowlisted window's point must be refused.
+const explorerBounds = explorer.bounds;
+let clickRejected = false;
+try {
+  const r = await client.callTool({
+    name: "desktop_click",
+    arguments: { x: explorerBounds.x + 5, y: explorerBounds.y + 5 },
+  });
+  clickRejected = r.isError === true;
+} catch {
+  clickRejected = true;
+}
+must(clickRejected, "desktop_click on a non-allowlisted window's coordinates is refused");
+
+// launch_app -> kill_process: full lifecycle with a REAL window, not a claim.
+// KNOWN LIMITATION (found here, not assumed): on Windows 11, notepad.exe is
+// a packaged-app redirector — Start-Process's returned pid is a short-lived
+// stub, NOT the pid that actually owns the window. Worse: ALL Notepad
+// windows in a session can share ONE host process, so kill_process on it
+// closes every open Notepad window, not just the one you launched. We
+// close out the earlier test window first so this sub-test is isolated and
+// doesn't nuke unrelated windows; this same fact means callers should
+// prefer desktop_close_window (a specific window) over desktop_kill_process
+// for single-instance packaged apps in real use.
+await killAllNotepad();
+await new Promise((r) => setTimeout(r, 500));
+
+const beforeLaunch = await call("windows_list");
+const launched = await call("desktop_launch_app", { path: "notepad.exe" });
+must(typeof launched.pid === "number", "desktop_launch_app returns a pid (may be a launcher stub for packaged apps — see comment above)");
+await call("desktop_wait", { ms: 1500 });
+const windowsAfterLaunch = await call("windows_list");
+const newNotepadWindows = windowsAfterLaunch.filter(
+  (w) => w.processName.toLowerCase() === "notepad.exe" && !beforeLaunch.some((b) => b.ref === w.ref)
+);
+must(newNotepadWindows.length > 0, "desktop_launch_app actually opens a new real Notepad window");
+const realOwningPid = newNotepadWindows[0].processId;
+await call("desktop_kill_process", { pid: realOwningPid });
+await call("desktop_wait", { ms: 500 });
+const windowsAfterKill = await call("windows_list");
+must(
+  !windowsAfterKill.some((w) => w.processName.toLowerCase() === "notepad.exe" && w.processId === realOwningPid),
+  "desktop_kill_process actually terminates the process — its windows are gone, not just claimed dead"
+);
 
 await client.close();
 await killAllNotepad();

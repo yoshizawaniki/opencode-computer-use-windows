@@ -148,7 +148,11 @@ export function registerDesktopTools(server) {
     "desktop_launch_app",
     {
       title: "Launch an application",
-      description: "Starts a new process (Start-Process). Destructive/expands attack surface — gated by config permission (ask), not the window allowlist.",
+      description:
+        "Starts a new process (Start-Process). Destructive/expands attack surface — gated by config permission " +
+        "(ask), not the window allowlist. NOTE: the returned pid may be a short-lived launcher stub for " +
+        "packaged Windows apps (observed with notepad.exe on Windows 11) — it is NOT guaranteed to be the pid " +
+        "that ends up owning the window. Use windows_list afterward to find the real window/pid.",
       inputSchema: { path: z.string(), args: z.array(z.string()).optional() },
     },
     async ({ path, args }) => text(await callUia({ action: "launch_app", path, args }))
@@ -168,7 +172,11 @@ export function registerDesktopTools(server) {
     "desktop_kill_process",
     {
       title: "Kill a process",
-      description: "Force-terminates the process with the given pid. Gated by config permission (ask) — irreversible.",
+      description:
+        "Force-terminates the process with the given pid. Gated by config permission (ask) — irreversible. " +
+        "CAUTION: some Windows 11 apps (observed with notepad.exe) run as a single shared host process " +
+        "across ALL open windows of that app — killing it closes every window, not just one. Prefer " +
+        "desktop_close_window for a single window when the target might be one of these.",
       inputSchema: { pid: z.number() },
     },
     async ({ pid }) => text(await callUia({ action: "kill_process", pid }))
