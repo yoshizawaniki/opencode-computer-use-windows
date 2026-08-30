@@ -8,6 +8,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { existsSync, rmSync, mkdirSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+import { chromium } from "playwright";
 
 const root = path.resolve(import.meta.dirname, "..");
 const PORT = 9422;
@@ -126,6 +127,53 @@ try {
     chromeUrlRejected = true;
   }
   must(chromeUrlRejected, "chrome:// navigation is blocked while attached");
+
+  // Negative test: browser_back must be blocked when the resulting URL is a
+  // blocked scheme, even though browser_navigate's guard never saw it — the
+  // tab's own history can already contain chrome:// from before we selected
+  // it. Set that history up via a SEPARATE Playwright connection (not our
+  // server), simulating "the real tab already visited chrome:// on its own".
+  const tabsBeforeHistorySetup = await call("browser_tabs_list");
+  const setupBrowser = await chromium.connectOverCDP(`http://127.0.0.1:${PORT}`);
+  const setupContext = setupBrowser.contexts()[0];
+  const setupPage = await setupContext.newPage();
+  await setupPage.goto("chrome://version/");
+  await setupPage.goto(fixtureUrl);
+  await setupBrowser.close(); // disconnect only — leaves the real tab open, per the same safety property being tested elsewhere
+
+  await new Promise((r) => setTimeout(r, 500));
+  const tabsWithHistory = await call("browser_tabs_list");
+  const historyTab = tabsWithHistory.find((t) => !tabsBeforeHistorySetup.some((b) => b.id === t.id));
+  must(Boolean(historyTab), "the tab with chrome:// in its history is discoverable and currently on a safe URL");
+  await call("browser_tab_select", { id: historyTab.id });
+
+  let backBlocked = false;
+  try {
+    const r = await client.callTool({ name: "browser_back", arguments: {} });
+    backBlocked = r.isError === true;
+  } catch {
+    backBlocked = true;
+  }
+  must(backBlocked, "browser_back is refused when it would land on a blocked scheme, even though the tab's CURRENT url was safe at selection time");
+  await call("browser_tab_close", { id: historyTab.id });
+
+  // Negative test: browser_tab_select itself must refuse to instrument a
+  // discovered tab that is CURRENTLY sitting on a blocked scheme (opened via
+  // Chrome's own CDP endpoint, bypassing our tools entirely).
+  const tabsBeforeChromeTab = await call("browser_tabs_list");
+  await fetch(`http://127.0.0.1:${PORT}/json/new?chrome://version/`, { method: "PUT" });
+  await new Promise((r) => setTimeout(r, 500));
+  const tabsWithChromeTab = await call("browser_tabs_list");
+  const chromeTab = tabsWithChromeTab.find((t) => !tabsBeforeChromeTab.some((b) => b.id === t.id));
+  must(Boolean(chromeTab), "a tab already on a chrome:// URL is discoverable");
+  let selectBlocked = false;
+  try {
+    const r = await client.callTool({ name: "browser_tab_select", arguments: { id: chromeTab.id } });
+    selectBlocked = r.isError === true;
+  } catch {
+    selectBlocked = true;
+  }
+  must(selectBlocked, "browser_tab_select refuses to instrument a tab currently on a blocked scheme");
 
   const detached = await call("browser_detach", {});
   must(detached.detached === true && detached.mode === "launch", "browser_detach disconnects and returns to launch mode");

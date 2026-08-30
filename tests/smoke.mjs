@@ -31,6 +31,15 @@ const navState = JSON.parse(nav.content[0].text);
 must(navState.title === "OC Fixture", "navigate returns real post-nav title, got: " + navState.title);
 must(navState.snapshot.includes('button "Go"'), "navigate snapshot lists the Go button");
 
+// Found by independent audit: snapshot.js predated the redaction rule
+// dom_query already had, so every mutating tool (observedState() calls
+// snapshot()) was shipping password-field plaintext to the LLM.
+must(
+  !navState.snapshot.includes("SuperSecretPassword123"),
+  "browser_snapshot never includes a password input's raw value — this is the core secret-non-exposure guarantee, and it applies to EVERY mutating tool's return value, not just browser_snapshot itself"
+);
+must(/redacted, length=22/.test(navState.snapshot), "the password field's real length is still surfaced, just not the value");
+
 const snap = await client.callTool({ name: "browser_snapshot", arguments: {} });
 const snapText = JSON.parse(snap.content[0].text).snapshot;
 const m = snapText.match(/\[([\d-]+)\] button "Go"/);

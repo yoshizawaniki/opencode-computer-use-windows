@@ -9,6 +9,7 @@ import {
   clearNetworkLogs,
   getMode,
 } from "../browser-session.js";
+import { SENSITIVE_NAME_PATTERN } from "../redaction.js";
 
 function text(obj) {
   return { content: [{ type: "text", text: typeof obj === "string" ? obj : JSON.stringify(obj, null, 2) }] };
@@ -65,14 +66,15 @@ export function registerDevtoolsTools(server) {
     async ({ selector, limit }) => {
       const page = await getActivePage();
       const result = await page.evaluate(
-        ({ selector, limit }) => {
+        ({ selector, limit, sensitivePattern }) => {
           const nodes = Array.from(document.querySelectorAll(selector)).slice(0, limit);
+          const sensitiveRe = new RegExp(sensitivePattern, "i");
           return nodes.map((el) => {
             // `value` on an <input> and `content` on a csrf/token/auth/secret/key
             // <meta> tag are exactly the kind of secret the cookie/storage
             // tools redact — dom_query must not become the bypass route for it.
             const isSecretMeta =
-              el.tagName === "META" && /csrf|token|auth|secret|key/i.test(el.getAttribute("name") || el.getAttribute("property") || "");
+              el.tagName === "META" && sensitiveRe.test(el.getAttribute("name") || el.getAttribute("property") || "");
             const attributes = Object.fromEntries(
               Array.from(el.attributes).map((a) => {
                 const redact = (a.name === "value" && el.tagName === "INPUT") || (a.name === "content" && isSecretMeta);
@@ -88,7 +90,7 @@ export function registerDevtoolsTools(server) {
             };
           });
         },
-        { selector, limit }
+        { selector, limit, sensitivePattern: SENSITIVE_NAME_PATTERN }
       );
       return text({ selector, count: result.length, elements: result });
     }

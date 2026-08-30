@@ -1,6 +1,7 @@
 // Simplified ref-tagged accessibility snapshot: "[3] button \"Save\"" style,
 // so tools never need to dump full HTML to the LLM. Refs are re-assigned on
 // every snapshot() call; stale refs from a prior snapshot are rejected.
+import { SENSITIVE_NAME_PATTERN } from "./redaction.js";
 
 let currentRefs = new Set();
 let generation = 0;
@@ -13,16 +14,27 @@ export async function snapshot(page) {
   generation += 1;
   const gen = generation;
   const { elements, truncated } = await page.evaluate(
-    ({ selector, gen, max }) => {
+    ({ selector, gen, max, sensitivePattern }) => {
       const isVisible = (el) => {
         const r = el.getBoundingClientRect();
         return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== "hidden";
+      };
+      const sensitiveRe = new RegExp(sensitivePattern, "i");
+      const inputValue = (el) => {
+        if (el.tagName !== "INPUT") return "";
+        const isSensitive =
+          el.type === "password" ||
+          sensitiveRe.test(el.name || "") ||
+          sensitiveRe.test(el.id || "") ||
+          sensitiveRe.test(el.getAttribute("aria-label") || "");
+        if (isSensitive) return el.value ? `<redacted, length=${el.value.length}>` : "";
+        return el.value || "";
       };
       const accessibleName = (el) =>
         el.getAttribute("aria-label") ||
         el.getAttribute("alt") ||
         el.getAttribute("placeholder") ||
-        (el.tagName === "INPUT" ? el.value : "") ||
+        inputValue(el) ||
         el.innerText?.trim().slice(0, 80) ||
         el.getAttribute("title") ||
         "";
@@ -37,7 +49,7 @@ export async function snapshot(page) {
       });
       return { elements, truncated: all.length > max };
     },
-    { selector: INTERACTIVE_SELECTOR, gen, max: MAX_ELEMENTS }
+    { selector: INTERACTIVE_SELECTOR, gen, max: MAX_ELEMENTS, sensitivePattern: SENSITIVE_NAME_PATTERN }
   );
 
   currentRefs = new Set(elements.map((e) => e.ref));

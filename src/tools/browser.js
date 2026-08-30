@@ -72,6 +72,11 @@ export function registerBrowserTools(server) {
     async () => {
       const page = await getActivePage();
       await page.goBack({ waitUntil: "load" });
+      // History can already contain a blocked-scheme URL (e.g. a real
+      // attached tab's own chrome:// visit) that browser_navigate's guard
+      // never saw — re-check the URL we actually landed on before letting
+      // its content reach the LLM via observedState().
+      assertNavigateAllowed(page.url());
       return text(await observedState(page, "back"));
     }
   );
@@ -82,6 +87,7 @@ export function registerBrowserTools(server) {
     async () => {
       const page = await getActivePage();
       await page.goForward({ waitUntil: "load" });
+      assertNavigateAllowed(page.url());
       return text(await observedState(page, "forward"));
     }
   );

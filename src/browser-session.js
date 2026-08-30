@@ -370,6 +370,11 @@ export async function selectTab(id) {
       discovered.delete(id);
       throw new Error(`unknown or closed tab id "${id}"`);
     }
+    // A discovered tab (real, pre-existing, or user-opened) can already be
+    // sitting on a blocked scheme before we ever navigate anywhere —
+    // browser_navigate's guard never sees this URL. Check before
+    // instrumenting, not after, so its content is never even snapshottable.
+    assertNavigateAllowed(discoveredPage.url());
     discovered.delete(id);
     trackPage(discoveredPage, id); // instrument NOW, only because it was explicitly selected
     activeTabId = id;
