@@ -11,6 +11,7 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PROFILE_DIR = path.join(ROOT, "artifacts", "browser-profile");
 const SCREENSHOT_DIR = path.join(ROOT, "artifacts", "screenshots");
 const DOWNLOAD_DIR = path.join(ROOT, "artifacts", "downloads");
+const UPLOAD_DIR = path.join(ROOT, "artifacts", "uploads");
 
 let contextPromise = null;
 let nextTabId = 1;
@@ -26,6 +27,27 @@ export function artifactPath(...parts) {
 export function downloadPath(...parts) {
   mkdirSync(DOWNLOAD_DIR, { recursive: true });
   return path.join(DOWNLOAD_DIR, ...parts);
+}
+
+// Upload sources are restricted to artifacts/uploads/ so a page's content
+// (read via snapshot, fed to the LLM) can never trick a tool call into
+// exfiltrating an arbitrary local file the agent happens to have read access
+// to. Callers who need to upload something first copy/write it in here.
+export function uploadPath(...parts) {
+  mkdirSync(UPLOAD_DIR, { recursive: true });
+  return path.join(UPLOAD_DIR, ...parts);
+}
+
+export function assertUploadAllowed(filePath) {
+  const resolved = path.resolve(filePath);
+  const base = path.resolve(UPLOAD_DIR) + path.sep;
+  if (!resolved.startsWith(base)) {
+    throw new Error(
+      `upload path "${filePath}" is outside the allowed uploads directory (${UPLOAD_DIR}); ` +
+        "place the file there first"
+    );
+  }
+  return resolved;
 }
 
 function trackPage(playwrightPage) {

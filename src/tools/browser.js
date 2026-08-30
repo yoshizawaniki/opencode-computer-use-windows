@@ -11,6 +11,8 @@ import {
   closeSession,
   artifactPath,
   downloadPath,
+  uploadPath,
+  assertUploadAllowed,
 } from "../browser-session.js";
 import { snapshot, locatorFor } from "../snapshot.js";
 import { createHash } from "node:crypto";
@@ -205,12 +207,17 @@ export function registerBrowserTools(server) {
     "browser_upload",
     {
       title: "Upload file(s) to a file input",
-      description: "Sets file(s) on the file input with the given ref, then returns the resulting page state.",
-      inputSchema: { ref: z.string(), paths: z.array(z.string()).describe("absolute local file paths") },
+      description:
+        "Sets file(s) on the file input with the given ref, then returns the resulting page state. " +
+        `Paths MUST already live under ${uploadPath()} — this prevents page content (read via ` +
+        "browser_snapshot and visible to the LLM) from being able to trick a tool call into " +
+        "exfiltrating an arbitrary local file. Place the file there first, then pass its path.",
+      inputSchema: { ref: z.string(), paths: z.array(z.string()).describe("paths under the artifacts/uploads directory") },
     },
     async ({ ref, paths }) => {
       const page = await getActivePage();
-      await locatorFor(page, ref).setInputFiles(paths);
+      const allowed = paths.map(assertUploadAllowed);
+      await locatorFor(page, ref).setInputFiles(allowed);
       return text(await observedState(page, `upload:${ref}`));
     }
   );

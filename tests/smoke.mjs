@@ -125,6 +125,26 @@ must(fwd.url.endsWith("#next"), "browser_forward returns the ACTUAL forward URL,
 const reload = JSON.parse((await client.callTool({ name: "browser_reload", arguments: {} })).content[0].text);
 must(reload.title === "OC Fixture", "browser_reload returns the real reloaded page state");
 
+// Negative test: browser_upload must refuse a path outside artifacts/uploads,
+// even for an existing, readable local file — this is the guard against page
+// content (fed to the LLM via snapshot) tricking an upload into exfiltrating
+// an arbitrary file the agent process can read.
+await client.callTool({ name: "browser_navigate", arguments: { url: fixtureUrl } });
+const anyRef = JSON.parse((await client.callTool({ name: "browser_snapshot", arguments: {} })).content[0].text).snapshot.match(
+  /\[([\d-]+)\]/
+)[1];
+let uploadRejected = false;
+try {
+  const r = await client.callTool({
+    name: "browser_upload",
+    arguments: { ref: anyRef, paths: [path.join(root, "tests", "fixtures", "basic.html")] },
+  });
+  uploadRejected = r.isError === true;
+} catch {
+  uploadRejected = true;
+}
+must(uploadRejected, "browser_upload refuses a path outside artifacts/uploads");
+
 // Element cap: a page with far more interactive elements than the cap must
 // not dump an unbounded tree at the LLM.
 const stressUrl = pathToFileURL(path.join(root, "tests", "fixtures", "stress.html")).href;
