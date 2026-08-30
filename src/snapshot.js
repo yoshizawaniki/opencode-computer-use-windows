@@ -1,7 +1,7 @@
 // Simplified ref-tagged accessibility snapshot: "[3] button \"Save\"" style,
 // so tools never need to dump full HTML to the LLM. Refs are re-assigned on
 // every snapshot() call; stale refs from a prior snapshot are rejected.
-import { SENSITIVE_NAME_PATTERN } from "./redaction.js";
+import { SENSITIVE_NAME_PATTERN, SPLIT_PATTERN_SOURCE } from "./redaction.js";
 
 let currentRefs = new Set();
 let generation = 0;
@@ -14,7 +14,7 @@ export async function snapshot(page) {
   generation += 1;
   const gen = generation;
   const { elements, truncated } = await page.evaluate(
-    ({ selector, gen, max, sensitivePattern }) => {
+    ({ selector, gen, max, sensitivePattern, splitPattern }) => {
       const isVisible = (el) => {
         const r = el.getBoundingClientRect();
         return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== "hidden";
@@ -22,8 +22,10 @@ export async function snapshot(page) {
       const sensitiveRe = new RegExp(sensitivePattern, "i");
       // Splits camelCase humps ("sessionKey" -> "session Key") so the
       // identifier-token boundary in sensitivePattern can see them —
-      // snake_case already has "_" as a non-letter separator.
-      const splitWords = (s) => String(s || "").replace(/([a-z0-9])([A-Z])/g, "$1 $2");
+      // snake_case already has "_" as a non-letter separator. Pattern comes
+      // from redaction.js via args, not a hand-copied literal.
+      const splitRe = new RegExp(splitPattern, "g");
+      const splitWords = (s) => String(s || "").replace(splitRe, "$1 $2");
       const inputValue = (el) => {
         if (el.tagName !== "INPUT") return "";
         const isSensitive =
@@ -53,7 +55,7 @@ export async function snapshot(page) {
       });
       return { elements, truncated: all.length > max };
     },
-    { selector: INTERACTIVE_SELECTOR, gen, max: MAX_ELEMENTS, sensitivePattern: SENSITIVE_NAME_PATTERN }
+    { selector: INTERACTIVE_SELECTOR, gen, max: MAX_ELEMENTS, sensitivePattern: SENSITIVE_NAME_PATTERN, splitPattern: SPLIT_PATTERN_SOURCE }
   );
 
   currentRefs = new Set(elements.map((e) => e.ref));

@@ -9,7 +9,7 @@ import {
   clearNetworkLogs,
   getMode,
 } from "../browser-session.js";
-import { SENSITIVE_NAME_PATTERN } from "../redaction.js";
+import { SENSITIVE_NAME_PATTERN, SPLIT_PATTERN_SOURCE } from "../redaction.js";
 
 function text(obj) {
   return { content: [{ type: "text", text: typeof obj === "string" ? obj : JSON.stringify(obj, null, 2) }] };
@@ -66,10 +66,11 @@ export function registerDevtoolsTools(server) {
     async ({ selector, limit }) => {
       const page = await getActivePage();
       const result = await page.evaluate(
-        ({ selector, limit, sensitivePattern }) => {
+        ({ selector, limit, sensitivePattern, splitPattern }) => {
           const nodes = Array.from(document.querySelectorAll(selector)).slice(0, limit);
           const sensitiveRe = new RegExp(sensitivePattern, "i");
-          const splitWords = (s) => String(s || "").replace(/([a-z0-9])([A-Z])/g, "$1 $2");
+          const splitRe = new RegExp(splitPattern, "g");
+          const splitWords = (s) => String(s || "").replace(splitRe, "$1 $2");
           return nodes.map((el) => {
             // `value` on an <input> and `content` on a csrf/token/auth/secret/key
             // <meta> tag are exactly the kind of secret the cookie/storage
@@ -91,7 +92,7 @@ export function registerDevtoolsTools(server) {
             };
           });
         },
-        { selector, limit, sensitivePattern: SENSITIVE_NAME_PATTERN }
+        { selector, limit, sensitivePattern: SENSITIVE_NAME_PATTERN, splitPattern: SPLIT_PATTERN_SOURCE }
       );
       return text({ selector, count: result.length, elements: result });
     }

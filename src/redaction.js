@@ -1,5 +1,5 @@
 // Single source of truth for "does this field name look sensitive" across
-// every DOM/UIA reader in this codebase (snapshot.js, dom_query, cookies,
+// every DOM/UIA reader in this codebase (snapshot.js, dom_query,
 // UIA's ConvertTo-ElementJson). Found via independent audit: snapshot.js
 // was written before this pattern existed anywhere and never redacted
 // input values at all — every mutating browser tool (observedState() calls
@@ -25,7 +25,15 @@ export const SENSITIVE_NAME_PATTERN =
 
 // "sessionKey" -> "session Key", "pinCode" -> "pin Code" — turns camelCase
 // humps into separators so the identifier-token boundary above can see
-// them. uia.ps1 keeps an equivalent [regex]::Replace() in ConvertTo-ElementJson.
+// them. Exported as a source string (not just the function below) because
+// page.evaluate() callbacks run in the BROWSER context and can't `import`
+// this module — they must reconstruct the same RegExp from this string via
+// their own args, rather than each hand-copying the literal (that hand-copy
+// is exactly how round 1's oversight happened). uia.ps1 keeps an equivalent
+// [regex]::Replace() in ConvertTo-ElementJson — separate process/language,
+// kept in sync by hand.
+export const SPLIT_PATTERN_SOURCE = "([a-z0-9])([A-Z])";
+
 export function splitIdentifierWords(name) {
-  return String(name ?? "").replace(/([a-z0-9])([A-Z])/g, "$1 $2");
+  return String(name ?? "").replace(new RegExp(SPLIT_PATTERN_SOURCE, "g"), "$1 $2");
 }

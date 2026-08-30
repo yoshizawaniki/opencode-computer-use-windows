@@ -40,6 +40,17 @@ must(
 );
 must(/redacted, length=22/.test(navState.snapshot), "the password field's real length is still surfaced, just not the value");
 
+// End-to-end wiring check for the identifier-token boundary fix: a
+// non-password input whose NAME (not type) marks it sensitive, via a
+// camelCase field name specifically (the case that broke twice before this
+// was pinned in tests/redaction-pattern.test.mjs — that test covers the
+// regex in isolation, this one covers redaction.js -> args -> snapshot.js
+// actually being wired together end to end).
+must(
+  !navState.snapshot.includes("camelCaseSecretValue456"),
+  "browser_snapshot redacts a camelCase-named sensitive field (name=\"sessionKey\"), not just type=password"
+);
+
 const snap = await client.callTool({ name: "browser_snapshot", arguments: {} });
 const snapText = JSON.parse(snap.content[0].text).snapshot;
 const m = snapText.match(/\[([\d-]+)\] button "Go"/);
