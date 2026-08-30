@@ -4,6 +4,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { pathToFileURL } from "node:url";
 import path from "node:path";
+import http from "node:http";
+import { readFile } from "node:fs/promises";
 
 const root = path.resolve(import.meta.dirname, "..");
 const fixtureUrl = pathToFileURL(path.join(root, "tests", "fixtures", "basic.html")).href;
@@ -152,6 +154,86 @@ const stress = JSON.parse((await client.callTool({ name: "browser_navigate", arg
 const btnCount = (stress.snapshot.match(/button "btn/g) || []).length;
 must(btnCount <= 150, `snapshot caps element count on a large page, got ${btnCount} elements`);
 must(stress.snapshot.includes("truncated"), "snapshot flags truncation instead of silently dropping elements");
+
+// --- Phase 2: DevTools / secret non-exposure -----------------------------
+
+// Real HTTP server (stdlib only) so we can set a real Set-Cookie header —
+// file:// URLs can't carry cookies reliably, and a structural-only test
+// ("no 'value' key exists") would pass vacuously with zero cookies.
+const fixtureHtml = await readFile(path.join(root, "tests", "fixtures", "basic.html"), "utf8");
+const httpServer = http.createServer((req, res) => {
+  res.setHeader("Set-Cookie", "secret_token=abcdef123456; HttpOnly; Path=/");
+  res.setHeader("Authorization-Echo", "should-never-appear-in-network-log");
+  res.end(fixtureHtml);
+});
+await new Promise((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
+const httpUrl = `http://127.0.0.1:${httpServer.address().port}/`;
+
+await client.callTool({ name: "browser_navigate", arguments: { url: httpUrl } });
+
+const cookies = JSON.parse((await client.callTool({ name: "browser_cookies", arguments: {} })).content[0].text);
+const secretCookie = cookies.find((c) => c.name === "secret_token");
+must(Boolean(secretCookie), "browser_cookies sees the real cookie set by the server");
+must(!("value" in secretCookie), "browser_cookies never includes the raw cookie 'value' field");
+must(secretCookie.hasValue === true && secretCookie.valueLength === "abcdef123456".length, "browser_cookies reports hasValue/valueLength instead of the value");
+
+const storage = JSON.parse((await client.callTool({ name: "browser_storage", arguments: {} })).content[0].text);
+const lsEntry = storage.localStorage.find((e) => e.key === "secret_ls");
+must(Boolean(lsEntry), "browser_storage sees the real localStorage key set by the fixture");
+must(!("value" in lsEntry), "browser_storage never includes the raw localStorage value");
+must(lsEntry.valueLength === "super-secret-value-12345".length, "browser_storage reports the real value length without the value");
+
+const netLogRaw = (await client.callTool({ name: "browser_network_log", arguments: {} })).content[0].text;
+must(!netLogRaw.includes("should-never-appear-in-network-log"), "browser_network_log never leaks response header VALUES");
+must(!netLogRaw.toLowerCase().includes("authorization-echo"), "browser_network_log doesn't even include header NAMES (metadata-only by design)");
+must(JSON.parse(netLogRaw).some((e) => e.url === httpUrl), "browser_network_log records the actual request that was made");
+
+const consoleLog = JSON.parse((await client.callTool({ name: "browser_console_log", arguments: {} })).content[0].text);
+must(consoleLog.some((e) => e.text === "fixture loaded"), "browser_console_log captures the ACTUAL console.log the page emitted");
+
+const domQuery = JSON.parse((await client.callTool({ name: "browser_dom_query", arguments: { selector: "button" } })).content[0].text);
+must(domQuery.count === 2, "browser_dom_query returns the real matching element count, got " + domQuery.count);
+
+const perf = JSON.parse((await client.callTool({ name: "browser_performance", arguments: {} })).content[0].text);
+must(typeof perf.loadMs === "number", "browser_performance returns real navigation timing");
+
+// Negative test: browser_evaluate must be disabled unless explicitly opted
+// into via env var — it must NOT silently run just because config allows it.
+let evalRejected = false;
+try {
+  const r = await client.callTool({ name: "browser_evaluate", arguments: { expression: "1+1" } });
+  evalRejected = r.isError === true;
+} catch {
+  evalRejected = true;
+}
+must(evalRejected, "browser_evaluate is disabled by default (requires OPENCODE_CU_ALLOW_EVAL=1)");
+
+const visible = JSON.parse((await client.callTool({ name: "browser_assert_visible", arguments: { selector: "#go" } })).content[0].text);
+must(visible.present === true && visible.visibleCount === 1, "browser_assert_visible confirms the ACTUAL presence of a real element");
+const notVisible = JSON.parse((await client.callTool({ name: "browser_assert_visible", arguments: { selector: "#does-not-exist" } })).content[0].text);
+must(notVisible.present === false && notVisible.visibleCount === 0, "browser_assert_visible correctly reports absence, not a rigged true");
+
+const textPresent = JSON.parse((await client.callTool({ name: "browser_assert_text", arguments: { text: "Go" } })).content[0].text);
+must(textPresent.present === true, "browser_assert_text finds text that is actually on the page");
+const textAbsent = JSON.parse((await client.callTool({ name: "browser_assert_text", arguments: { text: "definitely-not-on-this-page-xyz" } })).content[0].text);
+must(textAbsent.present === false, "browser_assert_text correctly reports absence of text that isn't there");
+
+// Visual verification: a real small UI change (button label) on a FULL-PAGE
+// screenshot must still register as changed — this caught a real bug where
+// the old flat 1% threshold missed small changes on large screenshots.
+await client.callTool({ name: "browser_navigate", arguments: { url: fixtureUrl } });
+const before = (await client.callTool({ name: "browser_screenshot", arguments: {} })).content[0].text;
+const freshGoRef2 = JSON.parse((await client.callTool({ name: "browser_snapshot", arguments: {} })).content[0].text).snapshot.match(
+  /\[([\d-]+)\] button "Go"/
+)[1];
+await client.callTool({ name: "browser_click", arguments: { ref: freshGoRef2 } });
+const after = (await client.callTool({ name: "browser_screenshot", arguments: {} })).content[0].text;
+const diff = JSON.parse((await client.callTool({ name: "browser_screenshot_diff", arguments: { beforePath: before, afterPath: after } })).content[0].text);
+must(diff.changed === true, `browser_screenshot_diff detects a real small UI change on a full-page screenshot, got diffRatio=${diff.diffRatio}`);
+const same = JSON.parse((await client.callTool({ name: "browser_screenshot_diff", arguments: { beforePath: after, afterPath: after } })).content[0].text);
+must(same.changed === false, "browser_screenshot_diff reports no change when comparing identical screenshots");
+
+httpServer.close();
 
 await client.close();
 console.log("\nALL SMOKE TESTS PASSED");

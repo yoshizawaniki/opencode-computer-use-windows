@@ -7,5 +7,9 @@
   <button id="go" onclick="document.getElementById('status').textContent='clicked'; this.textContent='Clicked!'">Go</button>
   <button id="alerter" onclick="alert('hello from fixture')">Alert</button>
   <a id="popup" href="basic.html" target="_blank">Open Tab</a>
+  <script>
+    localStorage.setItem("secret_ls", "super-secret-value-12345");
+    console.log("fixture loaded");
+  </script>
 </body>
 </html>

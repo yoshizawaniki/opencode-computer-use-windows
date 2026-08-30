@@ -18,6 +18,16 @@ let nextTabId = 1;
 const tabs = new Map(); // id -> Page
 let activeTabId = null;
 let lastDialog = null; // {type, message, defaultValue, at}
+const consoleLogs = new Map(); // tabId -> [{type, text, at}]
+const networkLogs = new Map(); // tabId -> [{url, method, resourceType, status, ok, failure, durationMs, at}]
+const LOG_CAP = 300; // never let an unbounded buffer grow forever or leak into a huge tool result
+
+function pushCapped(map, id, entry) {
+  const list = map.get(id) ?? [];
+  list.push(entry);
+  if (list.length > LOG_CAP) list.shift();
+  map.set(id, list);
+}
 
 export function artifactPath(...parts) {
   mkdirSync(SCREENSHOT_DIR, { recursive: true });
@@ -74,9 +84,54 @@ function trackPage(playwrightPage) {
       const remaining = [...tabs.keys()];
       activeTabId = remaining[remaining.length - 1] ?? null;
     }
+    clearLogs(id);
+  });
+
+  // Metadata only — no headers, no bodies. Headers/bodies routinely carry
+  // Authorization/Cookie/Set-Cookie or token fields, and this buffer's whole
+  // contents can end up in an LLM tool result, so those never get captured
+  // even for a single tool call, let alone buffered across a session.
+  playwrightPage.on("console", (msg) => {
+    pushCapped(consoleLogs, id, { type: msg.type(), text: msg.text(), at: new Date().toISOString() });
+  });
+  playwrightPage.on("requestfinished", async (req) => {
+    const res = await req.response().catch(() => null);
+    pushCapped(networkLogs, id, {
+      url: req.url(),
+      method: req.method(),
+      resourceType: req.resourceType(),
+      status: res?.status() ?? null,
+      ok: res?.ok() ?? null,
+      failure: null,
+      at: new Date().toISOString(),
+    });
+  });
+  playwrightPage.on("requestfailed", (req) => {
+    pushCapped(networkLogs, id, {
+      url: req.url(),
+      method: req.method(),
+      resourceType: req.resourceType(),
+      status: null,
+      ok: false,
+      failure: req.failure()?.errorText ?? "unknown failure",
+      at: new Date().toISOString(),
+    });
   });
 
   return id;
+}
+
+export function getConsoleLogs(tabId) {
+  return consoleLogs.get(tabId) ?? [];
+}
+
+export function getNetworkLogs(tabId) {
+  return networkLogs.get(tabId) ?? [];
+}
+
+export function clearLogs(tabId) {
+  consoleLogs.delete(tabId);
+  networkLogs.delete(tabId);
 }
 
 async function ensureContext() {
@@ -96,6 +151,10 @@ async function ensureContext() {
 
 export async function getContext() {
   return ensureContext();
+}
+
+export function getActiveTabId() {
+  return activeTabId;
 }
 
 export async function getActivePage() {
@@ -165,6 +224,8 @@ export async function closeSession() {
     tabs.clear();
     activeTabId = null;
     lastDialog = null;
+    consoleLogs.clear();
+    networkLogs.clear();
   }
 }
 
