@@ -67,13 +67,16 @@ export function registerDevtoolsTools(server) {
         ({ selector, limit }) => {
           const nodes = Array.from(document.querySelectorAll(selector)).slice(0, limit);
           return nodes.map((el) => {
-            // `value` on an <input> (hidden CSRF/API tokens included) is
-            // exactly the kind of secret the cookie/storage tools redact —
-            // dom_query must not become the bypass route for it.
+            // `value` on an <input> and `content` on a csrf/token/auth/secret/key
+            // <meta> tag are exactly the kind of secret the cookie/storage
+            // tools redact — dom_query must not become the bypass route for it.
+            const isSecretMeta =
+              el.tagName === "META" && /csrf|token|auth|secret|key/i.test(el.getAttribute("name") || el.getAttribute("property") || "");
             const attributes = Object.fromEntries(
-              Array.from(el.attributes).map((a) =>
-                a.name === "value" && el.tagName === "INPUT" ? [a.name, `<redacted, length=${a.value.length}>`] : [a.name, a.value]
-              )
+              Array.from(el.attributes).map((a) => {
+                const redact = (a.name === "value" && el.tagName === "INPUT") || (a.name === "content" && isSecretMeta);
+                return redact ? [a.name, `<redacted, length=${a.value.length}>`] : [a.name, a.value];
+              })
             );
             return {
               tagName: el.tagName.toLowerCase(),

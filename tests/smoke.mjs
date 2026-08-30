@@ -199,6 +199,11 @@ const csrfRaw = JSON.stringify(csrfQuery);
 must(!csrfRaw.includes("hidden-secret-token-98765"), "browser_dom_query redacts a hidden input's value (doesn't become the secret-exposure bypass route)");
 must(csrfQuery.elements[0].attributes.value.includes("length=25"), "browser_dom_query still reports the real value length, just not the value");
 
+const metaQuery = JSON.parse((await client.callTool({ name: "browser_dom_query", arguments: { selector: 'meta[name="csrf-token"]' } })).content[0].text);
+const metaRaw = JSON.stringify(metaQuery);
+must(!metaRaw.includes("meta-secret-token-54321"), "browser_dom_query redacts a csrf-token <meta> tag's content, not just <input value>");
+must(metaQuery.elements[0].attributes.content.includes("length=23"), "browser_dom_query still reports the real meta content length, just not the value");
+
 const perf = JSON.parse((await client.callTool({ name: "browser_performance", arguments: {} })).content[0].text);
 must(typeof perf.loadMs === "number", "browser_performance returns real navigation timing");
 
