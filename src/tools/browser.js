@@ -14,6 +14,9 @@ import {
   uploadPath,
   assertUploadAllowed,
   assertNavigateAllowed,
+  attachToChrome,
+  detachFromChrome,
+  getMode,
 } from "../browser-session.js";
 import { snapshot, locatorFor } from "../snapshot.js";
 import { createHash } from "node:crypto";
@@ -280,7 +283,14 @@ export function registerBrowserTools(server) {
 
   server.registerTool(
     "browser_tabs_list",
-    { title: "List tabs", description: "Lists all open tabs with id, url, title, and which one is active.", inputSchema: {} },
+    {
+      title: "List tabs",
+      description:
+        "Lists all open tabs with id, url, title, active, and selected. When attached to an external Chrome " +
+        "(browser_attach), tabs the agent hasn't selected yet (selected:false) show a redacted URL " +
+        "(origin+path only, no query/fragment) and are not yet operable — call browser_tab_select first.",
+      inputSchema: {},
+    },
     async () => text(await listTabs())
   );
 
@@ -321,6 +331,44 @@ export function registerBrowserTools(server) {
     async () => {
       await closeSession();
       return text("browser session closed");
+    }
+  );
+
+  server.registerTool(
+    "browser_attach",
+    {
+      title: "Attach to an external Chrome (real, user-owned)",
+      description:
+        "EXPLICIT attach only — never happens automatically. Connects to a real Chrome instance already running " +
+        "with --remote-debugging-port on 127.0.0.1 (a launch flag the user must have started Chrome with; this " +
+        "tool cannot start or restart Chrome itself). Recommended usage: a DEDICATED Chrome window the user " +
+        "logs into once and keeps running (\"chrome.exe --user-data-dir=<some folder> " +
+        "--remote-debugging-port=<port>\") — this does NOT touch the user's normal Chrome profile and does NOT " +
+        "inherit their currently-open normal tabs. Existing tabs in the attached browser are listed but NOT " +
+        "operable until explicitly selected via browser_tab_select (their console/network are never captured, " +
+        "dialogs never auto-accepted, until then). While attached: browser_evaluate is always refused, and " +
+        "chrome:// / devtools:// / chrome-extension:// navigation is blocked.",
+      inputSchema: { port: z.number().default(9222).describe("the --remote-debugging-port the target Chrome was started with") },
+    },
+    async ({ port }) => {
+      await attachToChrome(port);
+      return text({ attached: true, port, tabs: await listTabs() });
+    }
+  );
+
+  server.registerTool(
+    "browser_detach",
+    {
+      title: "Detach from the external Chrome",
+      description:
+        "Disconnects from the attached Chrome WITHOUT closing it or any of its tabs/windows (confirmed: this " +
+        "only ends the DevTools session, the real browser keeps running). Returns to normal (owned, isolated) " +
+        "browser mode. No-op error if not currently attached.",
+      inputSchema: {},
+    },
+    async () => {
+      await detachFromChrome();
+      return text({ detached: true, mode: getMode() });
     }
   );
 }

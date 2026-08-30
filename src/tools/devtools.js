@@ -7,6 +7,7 @@ import {
   getNetworkLogs,
   clearConsoleLogs,
   clearNetworkLogs,
+  getMode,
 } from "../browser-session.js";
 
 function text(obj) {
@@ -225,10 +226,15 @@ export function registerDevtoolsTools(server) {
       description:
         "DANGEROUS: runs arbitrary JS in the page context, which has this session's real cookies and can call " +
         "fetch() with them. Disabled by default; requires OPENCODE_CU_ALLOW_EVAL=1 in the server's environment " +
-        "AND config permission set to ask/allow. Return value is JSON-stringified and truncated to 2000 chars.",
+        "AND config permission set to ask/allow. Return value is JSON-stringified and truncated to 2000 chars. " +
+        "ALWAYS refused when attached to an external Chrome (browser_attach) regardless of the env var — that " +
+        "would let arbitrary JS read the user's real, logged-in session directly.",
       inputSchema: { expression: z.string().describe("JS expression to evaluate") },
     },
     async ({ expression }) => {
+      if (getMode() === "attach") {
+        throw new Error("browser_evaluate is always refused while attached to an external Chrome (browser_attach session)");
+      }
       if (!EVAL_ENABLED) {
         throw new Error(
           "browser_evaluate is disabled (set OPENCODE_CU_ALLOW_EVAL=1 in the MCP server's environment to enable it)"

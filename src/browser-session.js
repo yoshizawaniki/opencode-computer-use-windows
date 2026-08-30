@@ -15,8 +15,12 @@ const UPLOAD_DIR = path.join(ROOT, "artifacts", "uploads");
 
 let contextPromise = null;
 let nextTabId = 1;
-const tabs = new Map(); // id -> Page
+const tabs = new Map(); // id -> Page (instrumented: has listeners, operable by tools)
 let activeTabId = null;
+let mode = "launch"; // "launch" (owned Chromium profile) | "attach" (external real Chrome via CDP)
+let externalBrowser = null; // Playwright Browser from connectOverCDP, attach mode only
+const discovered = new Map(); // id -> Page, attach mode only: known but not yet selected/instrumented
+const discoveredIds = new WeakMap(); // Page -> id, keeps ids stable across repeated listTabs() calls
 let lastDialog = null; // {type, message, defaultValue, at}
 const consoleLogs = new Map(); // tabId -> [{type, text, at}]
 const networkLogs = new Map(); // tabId -> [{url, method, resourceType, status, ok, failure, durationMs, at}]
@@ -56,12 +60,22 @@ export function uploadPath(...parts) {
 // the page IS the local file, readable via snapshot/dom_query. Scope file://
 // to this project's own tree (fixtures, artifacts) so it can't be used to
 // read arbitrary files (e.g. credentials, SSH keys) elsewhere on disk.
+const ATTACH_BLOCKED_SCHEMES = new Set(["chrome:", "devtools:", "chrome-extension:", "edge:"]);
+
 export function assertNavigateAllowed(urlStr) {
   let url;
   try {
     url = new URL(urlStr);
   } catch {
     return; // not a well-formed URL; let page.goto surface its own error
+  }
+  // Attached to the user's REAL Chrome: chrome://settings/passwords,
+  // devtools:// (arbitrary CDP), chrome-extension:// backgrounds are all
+  // reachable by URL and none of them go through the redaction this
+  // server relies on elsewhere. Block only in attach mode — the owned
+  // Chromium profile has no real passwords/extensions to expose.
+  if (mode === "attach" && ATTACH_BLOCKED_SCHEMES.has(url.protocol)) {
+    throw new Error(`navigation to "${url.protocol}" URLs is blocked while attached to an external Chrome`);
   }
   if (url.protocol !== "file:") return;
   const filePath = decodeURIComponent(url.pathname).replace(/^\/([a-zA-Z]:)/, "$1");
@@ -87,8 +101,8 @@ export function assertUploadAllowed(filePath) {
   return resolved;
 }
 
-function trackPage(playwrightPage) {
-  const id = String(nextTabId++);
+function trackPage(playwrightPage, presetId = null) {
+  const id = presetId ?? String(nextTabId++);
   tabs.set(id, playwrightPage);
   activeTabId = id;
 
@@ -182,12 +196,79 @@ async function ensureContext() {
     for (const p of context.pages()) trackPage(p);
   }
   const context = await contextPromise;
-  if (tabs.size === 0) trackPage(await context.newPage());
+  // In attach mode, tabs the agent hasn't explicitly selected must stay
+  // un-instrumented (no listeners, not operable) — so never auto-create a
+  // page here the way launch mode does.
+  if (mode === "launch" && tabs.size === 0) trackPage(await context.newPage());
   return context;
 }
 
 export async function getContext() {
   return ensureContext();
+}
+
+export function getMode() {
+  return mode;
+}
+
+// Explicit attach only — this must never be reachable from any other tool's
+// code path. Discovers existing tabs WITHOUT instrumenting them (no
+// listeners, no dialog auto-accept, not operable) until browser_tab_select
+// explicitly promotes one — the user's own unrelated tabs stay untouched.
+export async function attachToChrome(port) {
+  if (contextPromise) {
+    throw new Error(`a browser session (${mode}) is already active; call browser_detach or browser_session_close first`);
+  }
+  const endpoint = `http://127.0.0.1:${port}`;
+  mode = "attach";
+  contextPromise = (async () => {
+    let browser;
+    try {
+      browser = await chromium.connectOverCDP(endpoint);
+    } catch (e) {
+      mode = "launch";
+      contextPromise = null;
+      throw new Error(
+        `could not attach to Chrome at ${endpoint}: ${e.message}. Launch a dedicated Chrome window first, e.g.: ` +
+          `"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --user-data-dir="<some folder>" --remote-debugging-port=${port}`
+      );
+    }
+    externalBrowser = browser;
+    const context = browser.contexts()[0] ?? (await browser.newContext());
+    // A page that appears AFTER attach (e.g. opened by the agent's own
+    // click, or a new tab the user opens mid-session) is tracked
+    // immediately, same as launch mode — only tabs that existed at the
+    // moment of attach are held back as "discovered, not yet selected".
+    context.on("page", (p) => {
+      if (![...tabs.values()].includes(p)) trackPage(p);
+    });
+    for (const p of context.pages()) {
+      const id = String(nextTabId++);
+      discoveredIds.set(p, id);
+      discovered.set(id, p);
+    }
+    return context;
+  })();
+  await contextPromise; // surface a bad port immediately, not on first tool call
+}
+
+export async function detachFromChrome() {
+  if (mode !== "attach") throw new Error("not currently attached to an external Chrome");
+  if (externalBrowser) {
+    // Confirmed by direct test: Browser.close() on a CDP-connected browser
+    // disconnects the DevTools session only — the real Chrome process (and
+    // all its windows/tabs) keeps running untouched.
+    await externalBrowser.close().catch(() => {});
+  }
+  externalBrowser = null;
+  contextPromise = null;
+  tabs.clear();
+  discovered.clear();
+  activeTabId = null;
+  lastDialog = null;
+  consoleLogs.clear();
+  networkLogs.clear();
+  mode = "launch";
 }
 
 export function getActiveTabId() {
@@ -208,12 +289,32 @@ export async function getTab(id) {
   return page;
 }
 
+// Query params/fragments routinely carry tokens (?access_token=...); an
+// unselected discovered tab is shown by origin+path only — enough to pick
+// the right tab without leaking a credential into the tool result just for
+// appearing in a list.
+function redactedUrl(page) {
+  try {
+    const u = new URL(page.url());
+    return u.origin + u.pathname;
+  } catch {
+    return page.url();
+  }
+}
+
 export async function listTabs() {
   await ensureContext();
   const result = [];
   for (const [id, p] of tabs) {
     if (p.isClosed()) continue;
-    result.push({ id, url: p.url(), title: await p.title().catch(() => ""), active: id === activeTabId });
+    result.push({ id, url: p.url(), title: await p.title().catch(() => ""), active: id === activeTabId, selected: true });
+  }
+  for (const [id, p] of discovered) {
+    if (p.isClosed()) {
+      discovered.delete(id);
+      continue;
+    }
+    result.push({ id, url: redactedUrl(p), title: await p.title().catch(() => ""), active: false, selected: false });
   }
   return result;
 }
@@ -227,11 +328,31 @@ export async function newTab() {
 }
 
 export async function selectTab(id) {
-  await getTab(id); // throws if unknown/closed
-  activeTabId = id;
+  if (tabs.has(id)) {
+    if (tabs.get(id).isClosed()) throw new Error(`unknown or closed tab id "${id}"`);
+    activeTabId = id;
+    return;
+  }
+  const discoveredPage = discovered.get(id);
+  if (discoveredPage) {
+    if (discoveredPage.isClosed()) {
+      discovered.delete(id);
+      throw new Error(`unknown or closed tab id "${id}"`);
+    }
+    discovered.delete(id);
+    trackPage(discoveredPage, id); // instrument NOW, only because it was explicitly selected
+    activeTabId = id;
+    return;
+  }
+  throw new Error(`unknown or closed tab id "${id}"`);
 }
 
 export async function closeTab(id) {
+  // Attach mode: refuse to close a tab the agent never selected/opened —
+  // an agent must not be able to close the user's unrelated real tabs.
+  if (mode === "attach" && discovered.has(id)) {
+    throw new Error(`tab "${id}" was never selected by this session — refusing to close a tab the agent didn't open/select`);
+  }
   const page = await getTab(id);
   await page.close();
 }
@@ -254,16 +375,22 @@ export function getLastDialog() {
 }
 
 export async function closeSession() {
-  if (contextPromise) {
-    const context = await contextPromise;
-    await context.close();
-    contextPromise = null;
-    tabs.clear();
-    activeTabId = null;
-    lastDialog = null;
-    consoleLogs.clear();
-    networkLogs.clear();
+  if (!contextPromise) return;
+  if (mode === "attach") {
+    // MUST NOT call context.close() here — on a CDP-attached context that
+    // would close the user's real browser windows/tabs, not just disconnect.
+    await detachFromChrome();
+    return;
   }
+  const context = await contextPromise;
+  await context.close();
+  contextPromise = null;
+  tabs.clear();
+  discovered.clear();
+  activeTabId = null;
+  lastDialog = null;
+  consoleLogs.clear();
+  networkLogs.clear();
 }
 
 process.on("SIGINT", () => closeSession().finally(() => process.exit(0)));
