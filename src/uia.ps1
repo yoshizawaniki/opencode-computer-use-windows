@@ -199,8 +199,8 @@ function ConvertTo-ElementJson($Element, [string]$Ref) {
     # belt-and-braces name/automationId regex match, so no caller has to remember to check.
     $isPassword = [bool]$cur.IsPassword
     if (-not $isPassword) {
-        if (($name -and $name -match '(?i)(password|secret|token|pin|cvv|csrf|auth|key)') -or
-            ($automationId -and $automationId -match '(?i)(password|secret|token|pin|cvv|csrf|auth|key)')) {
+        if (($name -and $name -match '(?i)(password|passwd|secret|token|csrf|cvv|api[-_]?key|access[-_]?key|private[-_]?key|\bkey\b|\bauth\b|\bpin\b)') -or
+            ($automationId -and $automationId -match '(?i)(password|passwd|secret|token|csrf|cvv|api[-_]?key|access[-_]?key|private[-_]?key|\bkey\b|\bauth\b|\bpin\b)')) {
             $isPassword = $true
         }
     }

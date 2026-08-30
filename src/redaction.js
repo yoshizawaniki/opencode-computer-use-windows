@@ -9,8 +9,11 @@
 // makes that class of oversight structurally harder to repeat.
 // uia.ps1 is a separate process/language and keeps its own copy of this
 // same pattern in ConvertTo-ElementJson — keep the two in sync by hand.
-export const SENSITIVE_NAME_PATTERN = "password|secret|token|pin|cvv|csrf|auth|key";
-
-export function redact(value) {
-  return `<redacted, length=${String(value ?? "").length}>`;
-}
+// Long/specific words match anywhere (substring) — they're unlikely to
+// collide with unrelated names. Short/generic words ("key", "auth", "pin")
+// are word-bounded — an unbounded match on those false-positived on
+// ordinary UI text ("keyboard", "Author", "spinner") and started silently
+// hiding real, harmless values (found via independent audit: this exact
+// broadening had just been made without the boundary and regressed UIA
+// element names). Keep it this way if adding more short words.
+export const SENSITIVE_NAME_PATTERN = "password|passwd|secret|token|csrf|cvv|api[-_]?key|access[-_]?key|private[-_]?key|\\bkey\\b|\\bauth\\b|\\bpin\\b";

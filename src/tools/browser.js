@@ -60,9 +60,16 @@ export function registerBrowserTools(server) {
     },
     async ({ url }) => {
       assertNavigateAllowed(url);
-      const page = await getActivePage();
+      // skipUrlCheck: the active page may already be stuck on a blocked
+      // scheme (that's exactly what this tool needs to be able to escape),
+      // and we're about to navigate away from it, not read its content.
+      const page = await getActivePage({ skipUrlCheck: true });
       await page.goto(url, { waitUntil: "load" });
-      return text(await observedState(page, `navigate:${url}`));
+      // A server-side redirect can land somewhere other than the validated
+      // target — re-check where we actually ended up via the normal
+      // (checked) getActivePage() before returning its content.
+      const landed = await getActivePage();
+      return text(await observedState(landed, `navigate:${url}`));
     }
   );
 
@@ -72,12 +79,12 @@ export function registerBrowserTools(server) {
     async () => {
       const page = await getActivePage();
       await page.goBack({ waitUntil: "load" });
-      // History can already contain a blocked-scheme URL (e.g. a real
-      // attached tab's own chrome:// visit) that browser_navigate's guard
-      // never saw — re-check the URL we actually landed on before letting
-      // its content reach the LLM via observedState().
-      assertNavigateAllowed(page.url());
-      return text(await observedState(page, "back"));
+      // Re-fetch via the checked getActivePage() rather than reusing the
+      // pre-navigation `page` reference directly — history can already
+      // contain a blocked-scheme URL (e.g. a real attached tab's own
+      // chrome:// visit) that browser_navigate's guard never saw.
+      const landed = await getActivePage();
+      return text(await observedState(landed, "back"));
     }
   );
 
@@ -87,8 +94,8 @@ export function registerBrowserTools(server) {
     async () => {
       const page = await getActivePage();
       await page.goForward({ waitUntil: "load" });
-      assertNavigateAllowed(page.url());
-      return text(await observedState(page, "forward"));
+      const landed = await getActivePage();
+      return text(await observedState(landed, "forward"));
     }
   );
 

@@ -286,10 +286,19 @@ export function getActiveTabId() {
   return activeTabId;
 }
 
-export async function getActivePage() {
+// Single choke point: every tool that reads or acts on the active page goes
+// through here, so the blocked-scheme check lives in ONE place instead of
+// being bolted onto individual tools (back/forward each getting their own
+// guard was the exact anti-pattern an earlier audit already flagged once).
+// browser_navigate is the one legitimate opt-out: it validates its OWN
+// target URL before ever calling page.goto(), and never reads page content
+// on the way in — without the opt-out, a tab already stuck on a blocked
+// scheme could never navigate itself away.
+export async function getActivePage({ skipUrlCheck = false } = {}) {
   await ensureContext();
   const page = tabs.get(activeTabId);
   if (!page || page.isClosed()) throw new Error("no active tab");
+  if (!skipUrlCheck) assertNavigateAllowed(page.url());
   return page;
 }
 

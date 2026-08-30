@@ -155,6 +155,34 @@ try {
     backBlocked = true;
   }
   must(backBlocked, "browser_back is refused when it would land on a blocked scheme, even though the tab's CURRENT url was safe at selection time");
+
+  // The failed browser_back call above was a real Playwright navigation —
+  // the active tab is now GENUINELY sitting on chrome://version/ (only the
+  // tool result was blocked, not the browser action itself). This is the
+  // scenario the choke point (getActivePage()) must cover: every OTHER read
+  // tool must also refuse while stuck here, and only browser_navigate must
+  // be able to escape it.
+  let snapshotBlockedWhileStuck = false;
+  try {
+    const r = await client.callTool({ name: "browser_snapshot", arguments: {} });
+    snapshotBlockedWhileStuck = r.isError === true;
+  } catch {
+    snapshotBlockedWhileStuck = true;
+  }
+  must(snapshotBlockedWhileStuck, "browser_snapshot is refused while the active tab is genuinely stuck on a blocked scheme (not just the tool that caused it)");
+
+  let domQueryBlockedWhileStuck = false;
+  try {
+    const r = await client.callTool({ name: "browser_dom_query", arguments: { selector: "body" } });
+    domQueryBlockedWhileStuck = r.isError === true;
+  } catch {
+    domQueryBlockedWhileStuck = true;
+  }
+  must(domQueryBlockedWhileStuck, "browser_dom_query is also refused while stuck on a blocked scheme — the choke point covers other tools, not just the one that landed there");
+
+  const escaped = await call("browser_navigate", { url: fixtureUrl });
+  must(escaped.url === fixtureUrl, "browser_navigate is the one tool that CAN escape a tab stuck on a blocked scheme");
+
   await call("browser_tab_close", { id: historyTab.id });
 
   // Negative test: browser_tab_select itself must refuse to instrument a
