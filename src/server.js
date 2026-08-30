@@ -41,7 +41,11 @@ const parentPid = process.ppid;
 setInterval(() => {
   try {
     process.kill(parentPid, 0); // throws if the parent is gone
-  } catch {
-    shutdown();
+  } catch (e) {
+    // ESRCH = no such process = parent is actually gone. Anything else
+    // (e.g. EPERM, which Windows can throw for a live process this one
+    // doesn't have rights to signal) must NOT be treated as "parent died" —
+    // that would silently kill a live session's browser.
+    if (e.code === "ESRCH") shutdown();
   }
 }, 5000).unref();

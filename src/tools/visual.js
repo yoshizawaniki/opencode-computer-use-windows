@@ -94,8 +94,8 @@ export function registerVisualTools(server) {
       description:
         "Polls a screenshot of the given region (or the full page if x/y/width/height are omitted) " +
         "every 300ms and compares it against the first captured frame. Returns as soon as the diff " +
-        "ratio exceeds 1%, or {changed: false} if timeoutMs elapses with no change (this is a normal " +
-        "result, not an error).",
+        "ratio exceeds changeThreshold (default 0.1%), or {changed: false} if timeoutMs elapses with " +
+        "no change (this is a normal result, not an error).",
       inputSchema: {
         x: z.number().optional(),
         y: z.number().optional(),

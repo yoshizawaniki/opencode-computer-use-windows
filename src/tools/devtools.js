@@ -1,5 +1,13 @@
 import { z } from "zod";
-import { getActivePage, getContext, getActiveTabId, getConsoleLogs, getNetworkLogs, clearLogs } from "../browser-session.js";
+import {
+  getActivePage,
+  getContext,
+  getActiveTabId,
+  getConsoleLogs,
+  getNetworkLogs,
+  clearConsoleLogs,
+  clearNetworkLogs,
+} from "../browser-session.js";
 
 function text(obj) {
   return { content: [{ type: "text", text: typeof obj === "string" ? obj : JSON.stringify(obj, null, 2) }] };
@@ -22,7 +30,7 @@ export function registerDevtoolsTools(server) {
     async ({ clear }) => {
       const id = getActiveTabId();
       const logs = getConsoleLogs(id);
-      if (clear) clearLogs(id);
+      if (clear) clearConsoleLogs(id);
       return text(logs);
     }
   );
@@ -39,7 +47,7 @@ export function registerDevtoolsTools(server) {
     async ({ clear }) => {
       const id = getActiveTabId();
       const logs = getNetworkLogs(id);
-      if (clear) clearLogs(id);
+      if (clear) clearNetworkLogs(id);
       return text(logs);
     }
   );
@@ -58,13 +66,23 @@ export function registerDevtoolsTools(server) {
       const result = await page.evaluate(
         ({ selector, limit }) => {
           const nodes = Array.from(document.querySelectorAll(selector)).slice(0, limit);
-          return nodes.map((el) => ({
-            tagName: el.tagName.toLowerCase(),
-            id: el.id || null,
-            className: el.className || null,
-            text: (el.textContent || "").trim().slice(0, 200),
-            attributes: Object.fromEntries(Array.from(el.attributes).map((a) => [a.name, a.value])),
-          }));
+          return nodes.map((el) => {
+            // `value` on an <input> (hidden CSRF/API tokens included) is
+            // exactly the kind of secret the cookie/storage tools redact —
+            // dom_query must not become the bypass route for it.
+            const attributes = Object.fromEntries(
+              Array.from(el.attributes).map((a) =>
+                a.name === "value" && el.tagName === "INPUT" ? [a.name, `<redacted, length=${a.value.length}>`] : [a.name, a.value]
+              )
+            );
+            return {
+              tagName: el.tagName.toLowerCase(),
+              id: el.id || null,
+              className: el.className || null,
+              text: (el.textContent || "").trim().slice(0, 200),
+              attributes,
+            };
+          });
         },
         { selector, limit }
       );

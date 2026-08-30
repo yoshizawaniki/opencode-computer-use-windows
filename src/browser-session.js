@@ -129,9 +129,19 @@ export function getNetworkLogs(tabId) {
   return networkLogs.get(tabId) ?? [];
 }
 
-export function clearLogs(tabId) {
+export function clearConsoleLogs(tabId) {
   consoleLogs.delete(tabId);
+}
+
+export function clearNetworkLogs(tabId) {
   networkLogs.delete(tabId);
+}
+
+// Full clear (both buffers) — used when a tab closes, not exposed to tools
+// individually so a `clear` on one log type can't silently wipe the other.
+export function clearLogs(tabId) {
+  clearConsoleLogs(tabId);
+  clearNetworkLogs(tabId);
 }
 
 async function ensureContext() {

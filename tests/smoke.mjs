@@ -194,6 +194,11 @@ must(consoleLog.some((e) => e.text === "fixture loaded"), "browser_console_log c
 const domQuery = JSON.parse((await client.callTool({ name: "browser_dom_query", arguments: { selector: "button" } })).content[0].text);
 must(domQuery.count === 2, "browser_dom_query returns the real matching element count, got " + domQuery.count);
 
+const csrfQuery = JSON.parse((await client.callTool({ name: "browser_dom_query", arguments: { selector: "#csrf" } })).content[0].text);
+const csrfRaw = JSON.stringify(csrfQuery);
+must(!csrfRaw.includes("hidden-secret-token-98765"), "browser_dom_query redacts a hidden input's value (doesn't become the secret-exposure bypass route)");
+must(csrfQuery.elements[0].attributes.value.includes("length=25"), "browser_dom_query still reports the real value length, just not the value");
+
 const perf = JSON.parse((await client.callTool({ name: "browser_performance", arguments: {} })).content[0].text);
 must(typeof perf.loadMs === "number", "browser_performance returns real navigation timing");
 
