@@ -50,6 +50,7 @@ must(
   !navState.snapshot.includes("camelCaseSecretValue456"),
   "browser_snapshot redacts a camelCase-named sensitive field (name=\"sessionKey\"), not just type=password"
 );
+must(/redacted, length=23/.test(navState.snapshot), "the sessionKey field's real length is still surfaced, just not the value");
 
 const snap = await client.callTool({ name: "browser_snapshot", arguments: {} });
 const snapText = JSON.parse(snap.content[0].text).snapshot;
