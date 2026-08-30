@@ -28,7 +28,29 @@ dialog anyway; only the OpenCode host can, and it does so by tool name only toda
 | clipboard_read / clipboard_write | ask (config) | read defaults to metadata-only (length+sha256) even with the ask approved; `includeValue:true` opts into the raw text |
 | desktop_notify | none | display-only, no state mutation beyond a transient balloon |
 | artifact_preview | scope: path restricted to `artifacts/` | same discipline as upload/download path scoping |
+| scheduled_task_register / scheduled_task_delete | ask (config) | also namespace-scoped: name must start with `OpenCodeUpgrade-`, `/Create` never passes `/F` (never overwrites an existing task) |
+| scheduled_task_list | none (read-only) | filtered to the `OpenCodeUpgrade-` namespace only |
+| task_checkpoint_save / _load / _list | none (tool-level `allow`) | writes/reads only under `artifacts/tasks/`; save scrubs known secret values and caps size at 50000 chars (fail loud, not silently truncated) |
 | workflow_record_start / _stop / _discard / _edit / _delete / _replay | none (tool-level `allow`) | `workflow_replay` dispatches in-process via tool-registry.js, which preserves each step's **scope** guard (assertNavigateAllowed/assertProcessAllowed/etc. still run) but CANNOT trigger the OpenCode host's **ask** dialog — that only fires for a real MCP tool call by name. Found in commander review: this made every ask-gated tool (desktop_kill_process, desktop_launch_app, desktop_close_window, browser_attach, browser_evaluate, clipboard_read, clipboard_write) callable unattended via a crafted workflow file. Fixed with `REPLAY_ALLOWED`, a fail-closed allowlist in `src/workflow.js` — those 7 tools are refused at replay dispatch regardless of what a workflow file contains, and any FUTURE ask-gated tool defaults to refused until explicitly added to the allowlist (the safe direction: a forgotten tool is blocked, not silently bypassable). |
+
+## Empirical finding: non-interactive `opencode run` auto-REJECTS ask permissions
+
+Measured directly (not assumed) for Phase E's Scheduled Tasks design: running
+`opencode run "<prompt that calls an ask-gated tool>"` with stdin closed and no TTY produces:
+
+```
+! permission requested: opencode-computer-use_clipboard_write (*); auto-rejecting
+✗ opencode-computer-use_clipboard_write {"text":"..."} failed
+Error: The user rejected permission to use this specific tool call.
+```
+
+Not a hang, not auto-allow — a clean auto-deny. This means a `schtasks`-launched, fully
+unattended `opencode run` can never execute an ask-gated tool (`browser_evaluate`,
+`browser_attach`, `desktop_launch_app`, `desktop_close_window`, `desktop_kill_process`,
+`clipboard_read`, `clipboard_write`) — the existing config permission alone already satisfies
+the design doc's "Scheduled Tasks からの起動でも Permission ルールは通常実行と同じ" requirement
+for this specific risk. No additional unattended-mode guard was added because none was needed
+— confirmed by measurement, not assumed by design.
 
 ## Known gap: no origin-level permission for browser_click/type/select/hover/scroll/key
 

@@ -11,6 +11,8 @@ import { registerWorkflowTools } from "./tools/workflow.js";
 import { registerClipboardTools } from "./tools/clipboard.js";
 import { registerNotifyTools } from "./tools/notify.js";
 import { registerArtifactPreviewTools } from "./tools/artifact-preview.js";
+import { registerCheckpointTools } from "./tools/checkpoint.js";
+import { registerScheduledTaskTools } from "./tools/scheduled-tasks.js";
 import { closeSession } from "./browser-session.js";
 import { scrubKnownSecrets } from "./redaction.js";
 import { registerHandler } from "./tool-registry.js";
@@ -49,6 +51,8 @@ registerWorkflowTools(server);
 registerClipboardTools(server);
 registerNotifyTools(server);
 registerArtifactPreviewTools(server);
+registerCheckpointTools(server);
+registerScheduledTaskTools(server);
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
