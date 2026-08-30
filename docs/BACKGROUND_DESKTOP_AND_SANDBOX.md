@@ -18,26 +18,36 @@ interferes with point-based hit tests and OS focus (documented directly: another
 window, `ChatGPT.exe`, was topmost at a target pixel during testing). This is the concrete
 motivation for wanting an isolated desktop at all — it's not hypothetical.
 
-| Option | Isolation | Cost/complexity | Verdict |
+**This machine's actual edition, measured (not assumed):** `Get-CimInstance
+Win32_OperatingSystem` reports **Windows 11 Home** (`EditionID = Core`). This matters because
+Home lacks the RDP host, Hyper-V, and Windows Sandbox that Pro/Enterprise ship with — the
+options below are evaluated against what THIS machine can actually run, not a generic
+Windows install.
+
+| Option | Isolation | Available on this machine (Home)? | Verdict |
 |---|---|---|---|
-| **Separate Windows session** (`tscon`/a second interactive session on the same login, or a second local user logged in via Fast User Switching) | Real: own desktop, own foreground/z-order, own window list. Same OS instance, same filesystem/registry/network. | Low — no new software. `mstsc /v:localhost` into a second session works on Windows 10/11 Pro+ (`fDenyTSConnections` off) without a full RDP server license issue since it's local. | **Recommended default.** Solves the actual, measured problem (desktop contention) with existing OS features. |
-| **RDP into the same machine** | Same as above, via the RDP protocol specifically. | Low, same mechanism as "separate session" — this row exists mainly to note that "RDP" and "separate session" are the same thing on Windows, not two different options. | Same as separate session — pick this framing if a *remote* client is what's wanted (ties into Phase 8's Remote Control), not for local isolation alone. |
-| **Windows Sandbox** (`WindowsSandbox.exe`) | Strong: disposable, isolated OS instance, own kernel-level namespace, resets on close. | Medium — requires Windows 10/11 **Pro/Enterprise** (not available on Home, which `systeminfo`/`docs/`… — this machine's actual edition should be checked before relying on this), and a fresh container boots in seconds but starts with no profile/no browser/no this-repo present unless explicitly mapped in via a `.wsb` config (folder mapping, startup command). | Good for a genuinely disposable one-shot task; **not** a good fit for anything needing persistent state (browser profile, this project's `artifacts/`, registered secrets) without extra config work each time. |
-| **VM** (Hyper-V, VirtualBox, etc.) | Strongest: fully separate OS, separate everything. | High — a VM needs provisioning, updates, licensing (if Windows), and its own copy of Node/Playwright/this project, or a shared-folder setup. Slower to start than a session or Windows Sandbox. | Overkill for the problem actually observed (desktop contention). Reasonable ONLY if the requirement becomes "the agent must never touch the user's real filesystem/registry at all," which is a Sandbox-boundary concern (below), not a Background-Desktop one. |
+| **Separate Windows session** (RDP-into-self, or a second local session) | Real: own desktop, own foreground/z-order, own window list. Same OS instance, same filesystem/registry/network. | **No.** Windows Home has no RDP host (`mstsc` can connect OUT, not accept inbound). Fast User Switching exists on Home, but only one session is interactively rendered at a time — the switched-away session's desktop isn't drawn, so UI Automation/SendInput against it doesn't behave like a real background desktop (elements report off-screen/inaccessible). Does not solve the problem on this edition. |
+| **Windows Sandbox** (`WindowsSandbox.exe`) | Strong: disposable, isolated OS instance, own kernel-level namespace, resets on close. | **No.** Requires Pro/Enterprise/Education. |
+| **VM** (Hyper-V, VirtualBox, VMware Player) | Strongest: fully separate OS, separate everything. | **Partial.** Hyper-V requires Pro+. VirtualBox/VMware Player run on Home, but need a separately-licensed Windows guest (or a Linux guest, which can't run this Windows-specific UIA/SendInput stack) — real cost and setup, not free. | Only path to genuine desktop isolation on THIS edition, and only after acquiring a guest OS license. |
+| **Stay on the shared desktop, rely on existing Tool-level guards** | None (shared desktop, real contention as measured). | Already true today, zero cost. | **Recommended default for this machine.** See below. |
 
-**Recommendation: a separate Windows session (via a second local session or `mstsc
-/v:localhost`), not a VM or Windows Sandbox, as the default.** It solves the actual measured
-problem — desktop/focus contention with the user's real, concurrently-used windows — with
-existing OS mechanisms, no new licensing, no provisioning, and it keeps this project's
-filesystem/profile/secrets store reachable without extra config. Windows Sandbox is worth
-revisiting if/when a genuinely disposable, no-persistent-state execution mode is wanted (e.g.
-running an UNTRUSTED workflow file from Record & Replay) — that's a different requirement
-than "don't fight the user for the mouse," and is noted as a future option, not built now
-(YAGNI: no current caller needs it).
+**Recommendation, revised for what this machine can actually run: stay on the shared
+desktop.** None of the isolation options are free on Windows 11 Home — the two OS-native ones
+(separate session, Windows Sandbox) are simply unavailable, and the remaining option (a VM)
+requires a paid second Windows license to be useful for this Windows-specific tool stack. The
+desktop-contention problem this session measured (a real window occluding a target pixel) is
+real but occasional and already visible to the caller — `desktop_annotate_point`/`desktop_click`
+fail loudly (refused, not silently wrong) when it happens, which is the acceptable mitigation
+at zero cost. **If the user upgrades to Windows 11 Pro**, re-evaluate: a second local session
+(free, built into Pro) becomes the right default, for the reasons in the original comparison
+below. Windows Sandbox remains worth a look later for a genuinely disposable, no-persistent-
+state execution mode (e.g. running an untrusted workflow file from Record & Replay) — a
+different requirement than desktop contention, not pursued now (YAGNI: no current caller
+needs it, and it's unavailable on this edition anyway).
 
-Not implemented in this pass — this is a recommendation for the user/operator to set up
-(launching an MCP session inside a second local Windows session), not something `server.js`
-itself can arrange; it doesn't control which session it's launched from.
+Not implemented in this pass — this is operator guidance (what to do IF the edition changes),
+not something `server.js` itself can arrange; it doesn't control which session/edition it
+runs under.
 
 ## Sandbox — boundary-by-boundary state
 
@@ -58,6 +68,12 @@ process, credentials, browser profile mostly solid; network and external-communi
 partial by design — a browser tool's whole job is to browse). The one boundary with no
 implementation at all is Remote Control's inbound network surface, which is Phase 8's
 separate, not-yet-started item.
+
+**Known coordinate-system risk (not fixed, documented):** `src/uia.ps1` declares no DPI
+awareness. At this machine's current 100% display scaling, UIA physical coordinates and
+WinForms' `VirtualScreen`/`SendInput` coordinates agree, which is why the screenshot-origin
+fix above (see F1 FINAL) works cleanly. At a non-100% scale factor, UIA and WinForms can
+report different coordinate spaces for the same physical pixel — not exercised or fixed here.
 
 **OS/process/container/VM-level boundaries** (stronger than Tool-level checks) were compared
 above (Background Desktop table) and not built — the current Tool-level checks address the

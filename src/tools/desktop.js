@@ -39,7 +39,12 @@ export function registerDesktopTools(server) {
     "desktop_screenshot",
     {
       title: "Screenshot the full screen or a window",
-      description: "Saves a PNG to the artifacts directory and returns its path. Pass a window ref to capture just that window, or omit for full screen.",
+      description:
+        "Saves a PNG to the artifacts directory and returns its path, PLUS the capture's (x, y) origin in " +
+        "SCREEN coordinates and its (width, height). On a multi-monitor system the origin is virtually never " +
+        "(0, 0) — a pixel at (px, py) in the saved image is screen coordinate (x + px, y + py); ADD the " +
+        "returned origin before passing a pixel from this image to desktop_click/desktop_annotate_point/etc. " +
+        "Pass a window ref to capture just that window, or omit for full screen.",
       inputSchema: { ref: z.string().optional() },
     },
     async ({ ref }) => {
@@ -54,7 +59,9 @@ export function registerDesktopTools(server) {
     "desktop_screenshot_region",
     {
       title: "Screenshot a screen region",
-      description: "Saves a PNG of the given screen-pixel region (x, y, width, height) to the artifacts directory and returns its path.",
+      description:
+        "Saves a PNG of the given SCREEN-coordinate region (x, y, width, height, not image-pixel-relative) to " +
+        "the artifacts directory and returns its path plus the same (x, y, width, height) for confirmation.",
       inputSchema: { x: z.number(), y: z.number(), width: z.number(), height: z.number() },
     },
     async ({ x, y, width, height }) => {
@@ -81,8 +88,10 @@ export function registerDesktopTools(server) {
     {
       title: "Click at screen coordinates",
       description:
-        "Last-resort fallback for when UI Automation can't address a control — clicks at raw (x, y). " +
-        "Refuses if the window under the point isn't in the allowlist. Returns the resulting active window state.",
+        "Last-resort fallback for when UI Automation can't address a control — clicks at raw (x, y) in SCREEN " +
+        "coordinates (same coordinate system desktop_screenshot's returned origin uses — NOT relative to a " +
+        "saved image's top-left unless that image's origin was (0,0)). Refuses if the window under the point " +
+        "isn't in the allowlist. Returns the resulting active window state.",
       inputSchema: { x: z.number(), y: z.number(), button: z.enum(["left", "right", "double"]).default("left") },
     },
     async ({ x, y, button }) => {
@@ -97,7 +106,8 @@ export function registerDesktopTools(server) {
     {
       title: "Resolve a screen point to a real, actionable UI element (Browser Annotation)",
       description:
-        "Given a screen coordinate the user pointed at (e.g. from a desktop_screenshot they annotated), " +
+        "Given a SCREEN coordinate the user pointed at (e.g. from a desktop_screenshot they annotated — ADD " +
+        "that screenshot's returned origin to the image pixel first, don't pass raw image pixels here), " +
         "returns the actual UI Automation element under that point as a real ref usable by windows_get_value/ " +
         "windows_invoke/etc. — not just the containing window (see desktop_click for that). Refuses if the " +
         "window under the point isn't in the process allowlist. May return null if the element's tree " +

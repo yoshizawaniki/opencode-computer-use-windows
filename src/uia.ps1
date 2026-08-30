@@ -558,24 +558,34 @@ try {
         }
 
         'screenshot_fullscreen' {
+            # Real finding (commander review, multi-monitor machine): the
+            # virtual screen origin is NOT always (0,0) — this machine's
+            # second monitor puts it at (0,-1080). A pixel in the saved PNG
+            # is at SCREEN coordinate (pixelX + originX, pixelY + originY),
+            # which desktop_annotate_point/desktop_click need — so the
+            # origin MUST be in the response, not just width/height.
             $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen
             Save-ScreenRegion -X $vs.X -Y $vs.Y -W $vs.Width -H $vs.Height -SavePath $req.savePath
-            $data = @{ path = $req.savePath; width = $vs.Width; height = $vs.Height }
+            $data = @{ path = $req.savePath; x = $vs.X; y = $vs.Y; width = $vs.Width; height = $vs.Height }
         }
 
         'screenshot_window' {
             $resolved = Resolve-Ref $req.ref
             $rect = $resolved.Element.Current.BoundingRectangle
             if ($rect.IsEmpty -or $rect.Width -le 0 -or $rect.Height -le 0) { throw "Element has no visible bounds to capture: $($req.ref)" }
+            $ox = [int][math]::Round($rect.X); $oy = [int][math]::Round($rect.Y)
             $w = [int][math]::Round($rect.Width); $h = [int][math]::Round($rect.Height)
-            Save-ScreenRegion -X ([int][math]::Round($rect.X)) -Y ([int][math]::Round($rect.Y)) -W $w -H $h -SavePath $req.savePath
-            $data = @{ path = $req.savePath; width = $w; height = $h }
+            Save-ScreenRegion -X $ox -Y $oy -W $w -H $h -SavePath $req.savePath
+            # Same reason as screenshot_fullscreen: the capture rect's own
+            # origin is virtually never (0,0), so it must round-trip too.
+            $data = @{ path = $req.savePath; x = $ox; y = $oy; width = $w; height = $h }
         }
 
         'screenshot_region' {
             $w = [int]$req.width; $h = [int]$req.height
-            Save-ScreenRegion -X ([int]$req.x) -Y ([int]$req.y) -W $w -H $h -SavePath $req.savePath
-            $data = @{ path = $req.savePath; width = $w; height = $h }
+            $ox = [int]$req.x; $oy = [int]$req.y
+            Save-ScreenRegion -X $ox -Y $oy -W $w -H $h -SavePath $req.savePath
+            $data = @{ path = $req.savePath; x = $ox; y = $oy; width = $w; height = $h }
         }
 
         'app_context' {

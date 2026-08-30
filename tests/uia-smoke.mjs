@@ -162,6 +162,31 @@ must(
 );
 must(typeof annotatedPoint.ref === "string" && annotatedPoint.ref.length > 0, "desktop_annotate_point returns a real, usable ref");
 
+// Regression (commander review, found on this actual multi-monitor
+// machine): screenshot_fullscreen/_window/_region didn't return their
+// capture's SCREEN origin, only width/height. On a monitor layout where
+// the virtual screen origin isn't (0,0) (this machine's second monitor is
+// at Y=-1080), a caller converting an IMAGE pixel back to a screen
+// coordinate without that origin lands on the WRONG monitor entirely —
+// the actual "point at a screenshot" workflow this tool exists for was
+// never exercised end-to-end by the tests above (they built screen points
+// directly from windows_tree's already-screen-absolute bounds). This test
+// closes that gap: take a real fullscreen screenshot, treat the known
+// edit control's center as if it were picked from that IMAGE (subtract
+// the origin), then convert back exactly as a real caller must (add the
+// origin back) and confirm it resolves to the SAME element.
+const fullShot = await call("desktop_screenshot", {});
+must(typeof fullShot.x === "number" && typeof fullShot.y === "number", `desktop_screenshot returns a real (x,y) capture origin, got: ${JSON.stringify(fullShot)}`);
+const imagePixelX = cx - fullShot.x;
+const imagePixelY = cy - fullShot.y;
+const roundTrippedScreenX = fullShot.x + imagePixelX;
+const roundTrippedScreenY = fullShot.y + imagePixelY;
+const viaScreenshotOrigin = await call("desktop_annotate_point", { x: roundTrippedScreenX, y: roundTrippedScreenY });
+must(
+  viaScreenshotOrigin && viaScreenshotOrigin.controlType === candidate.controlType,
+  `desktop_screenshot's origin correctly round-trips an image pixel back to the real element (screenshot origin was ${fullShot.x},${fullShot.y}), got: ${JSON.stringify(viaScreenshotOrigin)}`
+);
+
 // Negative test: a ref whose hwnd is real but whose embedded pid doesn't
 // match that window's CURRENT process must be rejected as stale, not
 // silently resolved against whatever now owns that hwnd.
