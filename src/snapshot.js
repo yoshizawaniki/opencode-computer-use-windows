@@ -7,12 +7,13 @@ let generation = 0;
 
 const INTERACTIVE_SELECTOR =
   "button, a[href], input, textarea, select, summary, [role], [onclick], [tabindex]";
+const MAX_ELEMENTS = 150; // never dump an unbounded tree at the LLM
 
 export async function snapshot(page) {
   generation += 1;
   const gen = generation;
-  const elements = await page.evaluate(
-    ({ selector, gen }) => {
+  const { elements, truncated } = await page.evaluate(
+    ({ selector, gen, max }) => {
       const isVisible = (el) => {
         const r = el.getBoundingClientRect();
         return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== "hidden";
@@ -27,21 +28,24 @@ export async function snapshot(page) {
         "";
       const roleOf = (el) => el.getAttribute("role") || el.tagName.toLowerCase();
 
-      const nodes = Array.from(document.querySelectorAll(selector)).filter(isVisible);
-      return nodes.map((el, i) => {
+      const all = Array.from(document.querySelectorAll(selector)).filter(isVisible);
+      const nodes = all.slice(0, max);
+      const elements = nodes.map((el, i) => {
         const ref = `${gen}-${i}`;
         el.setAttribute("data-oc-ref", ref);
         return { ref, role: roleOf(el), name: accessibleName(el) };
       });
+      return { elements, truncated: all.length > max };
     },
-    { selector: INTERACTIVE_SELECTOR, gen }
+    { selector: INTERACTIVE_SELECTOR, gen, max: MAX_ELEMENTS }
   );
 
   currentRefs = new Set(elements.map((e) => e.ref));
   const url = page.url();
   const title = await page.title();
-  const text = elements.map((e) => `[${e.ref}] ${e.role} "${e.name}"`).join("\n");
-  return { url, title, elements, text };
+  let text = elements.map((e) => `[${e.ref}] ${e.role} "${e.name}"`).join("\n");
+  if (truncated) text += `\n… truncated at ${MAX_ELEMENTS} elements, page has more`;
+  return { url, title, elements, text, truncated };
 }
 
 export function assertFreshRef(ref) {
