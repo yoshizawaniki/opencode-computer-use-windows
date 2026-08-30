@@ -76,6 +76,25 @@ try {
   const tabsAfter = await call("browser_tabs_list");
   must(tabsAfter.find((t) => t.id === preexisting.id)?.selected === true, "the selected tab now shows selected:true");
 
+  // Negative test: a tab opened by something OTHER than the agent (simulating
+  // the user opening a new tab in the attached window — the (c) usage
+  // pattern's actual login step) must NOT be auto-instrumented. Opened via
+  // Chrome's own CDP HTTP endpoint directly, bypassing our MCP tools
+  // entirely, so this is genuinely "not caused by an agent click".
+  const newTabUrl = fixtureUrl + "?should_not_appear_in_logs=secret123";
+  await fetch(`http://127.0.0.1:${PORT}/json/new?${encodeURIComponent(newTabUrl)}`, { method: "PUT" });
+  await new Promise((r) => setTimeout(r, 500));
+  const tabsWithUserTab = await call("browser_tabs_list");
+  const userOpenedTab = tabsWithUserTab.find((t) => t.id !== preexisting.id);
+  must(Boolean(userOpenedTab), "a tab opened outside the agent's control is still discoverable");
+  must(userOpenedTab.selected === false, "a user-opened tab is NOT auto-selected/instrumented");
+  must(!userOpenedTab.url.includes("secret123"), "a user-opened tab's URL is redacted (query stripped) even before any selection");
+  const netLogsForUserTab = await call("browser_network_log", {}); // active tab is still `preexisting`, not the new one
+  must(
+    !JSON.stringify(netLogsForUserTab).includes("secret123"),
+    "no network activity was captured for the un-instrumented user-opened tab"
+  );
+
   // Negative test: browser_evaluate must be refused unconditionally while attached.
   let evalRejected = false;
   try {

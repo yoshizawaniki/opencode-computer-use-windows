@@ -235,11 +235,22 @@ export async function attachToChrome(port) {
     }
     externalBrowser = browser;
     const context = browser.contexts()[0] ?? (await browser.newContext());
-    // A page that appears AFTER attach (e.g. opened by the agent's own
-    // click, or a new tab the user opens mid-session) is tracked
-    // immediately, same as launch mode — only tabs that existed at the
-    // moment of attach are held back as "discovered, not yet selected".
+    // A page that appears AFTER attach must NOT be auto-instrumented — it
+    // could be the user opening a new tab in their own window and logging
+    // into something (this is exactly the (c) usage pattern the design
+    // recommends). It goes to `discovered` like a pre-existing tab, same
+    // URL redaction, same "must be explicitly selected" rule. A popup the
+    // AGENT's own click opened is still tracked immediately, but that path
+    // goes through withPopupTracking() below, not this generic listener.
     context.on("page", (p) => {
+      if (mode === "attach") {
+        if (![...tabs.values()].includes(p) && !discoveredIds.has(p)) {
+          const id = String(nextTabId++);
+          discoveredIds.set(p, id);
+          discovered.set(id, p);
+        }
+        return;
+      }
       if (![...tabs.values()].includes(p)) trackPage(p);
     });
     for (const p of context.pages()) {
@@ -364,9 +375,20 @@ export async function withPopupTracking(context, action) {
   const popupPromise = context.waitForEvent("page", { timeout: 1000 }).catch(() => null);
   await action();
   const popup = await popupPromise;
-  if (popup) {
-    const id = [...tabs.entries()].find(([, p]) => p === popup)?.[0];
-    if (id) activeTabId = id;
+  if (!popup) return;
+  const trackedId = [...tabs.entries()].find(([, p]) => p === popup)?.[0];
+  if (trackedId) {
+    activeTabId = trackedId;
+    return;
+  }
+  // In attach mode the generic page listener sent this popup to `discovered`
+  // (untracked) rather than instrumenting it — but it's a DIRECT result of
+  // the agent's own click, so promote it now, same as selectTab() would.
+  const discoveredId = [...discovered.entries()].find(([, p]) => p === popup)?.[0];
+  if (discoveredId) {
+    discovered.delete(discoveredId);
+    trackPage(popup, discoveredId);
+    activeTabId = discoveredId;
   }
 }
 
