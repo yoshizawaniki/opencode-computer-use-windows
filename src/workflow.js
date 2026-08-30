@@ -60,6 +60,7 @@ const REPLAY_ALLOWED = new Set([
   "desktop_move", "desktop_drag", "desktop_scroll", "desktop_type_text", "desktop_secret_type",
   "desktop_key", "desktop_wait",
   "desktop_notify", "artifact_preview",
+  "browser_annotate_point", "desktop_annotate_point",
   // Deliberately excluded (ask-gated in opencode.jsonc — see
   // PERMISSION_COVERAGE.md): browser_evaluate, browser_attach,
   // desktop_launch_app, desktop_close_window, desktop_kill_process,
@@ -71,6 +72,8 @@ const REPLAY_ALLOWED = new Set([
 // themselves — recording a workflow while recording it is nonsensical).
 const EXCLUDE_FROM_RECORDING = new Set([
   "browser_snapshot",
+  "browser_annotate_point",
+  "desktop_annotate_point",
   "browser_tabs_list",
   "browser_last_dialog",
   "browser_screenshot",

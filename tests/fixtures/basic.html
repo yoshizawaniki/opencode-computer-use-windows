@@ -4,7 +4,7 @@
 <body>
   <h1 id="status">idle</h1>
   <input id="box" placeholder="type here" />
-  <button id="go" onclick="document.getElementById('status').textContent='clicked'; this.textContent='Clicked!'">Go</button>
+  <button id="go" style="position:absolute; left:10px; top:100px; width:80px; height:30px;" onclick="document.getElementById('status').textContent='clicked'; this.textContent='Clicked!'">Go</button>
   <button id="alerter" onclick="alert('hello from fixture')">Alert</button>
   <a id="popup" href="basic.html" target="_blank">Open Tab</a>
   <input type="hidden" id="csrf" value="hidden-secret-token-98765" />

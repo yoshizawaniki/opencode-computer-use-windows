@@ -510,6 +510,53 @@ try {
             }
         }
 
+        'element_at_point' {
+            # Browser Annotation (desktop side): unlike window_at_point
+            # (which deliberately walks up to the top-level WINDOW), this
+            # returns the actual leaf element under the point, addressable
+            # by the SAME ref format everything else uses — so a
+            # user-pointed screen coordinate becomes a real, re-usable ref,
+            # not just "here's what window that's in."
+            $data = $null
+            $pt = New-Object System.Windows.Point([double]$req.x, [double]$req.y)
+            $el = $null
+            try { $el = [System.Windows.Automation.AutomationElement]::FromPoint($pt) } catch { $el = $null }
+            if ($null -ne $el) {
+                # Must use ControlViewWalker (same as Get-ChildrenList /
+                # Resolve-Ref's path semantics) — RawViewWalker's child
+                # ordering/set differs and would produce a path that later
+                # resolves to the wrong element.
+                $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+                $chain = New-Object System.Collections.Generic.List[int]
+                $current = $el
+                $ok = $true
+                while ($true) {
+                    $parent = $null
+                    try { $parent = $walker.GetParent($current) } catch { $parent = $null }
+                    if ($null -eq $parent) { break }
+                    $hwndCheck = 0
+                    try { $hwndCheck = $parent.Current.NativeWindowHandle } catch { $hwndCheck = 0 }
+                    $siblings = Get-ChildrenList $parent
+                    $idx = -1
+                    for ($i = 0; $i -lt $siblings.Count; $i++) {
+                        if ($siblings[$i].Equals($current)) { $idx = $i; break }
+                    }
+                    if ($idx -lt 0) { $ok = $false; break }
+                    $chain.Insert(0, $idx)
+                    $current = $parent
+                    if ($hwndCheck -ne 0) { break } # $current is now the top-level window
+                }
+                if ($ok) {
+                    $hwnd = $current.Current.NativeWindowHandle
+                    if ($hwnd -ne 0) {
+                        $path = [string]::Join('.', $chain.ToArray())
+                        $refStr = Make-Ref -Hwnd $hwnd -OwnerPid $current.Current.ProcessId -Path $path
+                        $data = ConvertTo-ElementJson -Element $el -Ref $refStr
+                    }
+                }
+            }
+        }
+
         'screenshot_fullscreen' {
             $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen
             Save-ScreenRegion -X $vs.X -Y $vs.Y -W $vs.Width -H $vs.Height -SavePath $req.savePath

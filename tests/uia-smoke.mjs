@@ -120,6 +120,7 @@ must(Boolean(candidate), "can resolve a live notepad edit-control ref (with retr
 // that is the reliable way to establish focus before raw keyboard input.
 const cx = Math.round(candidate.bounds.x + candidate.bounds.width / 2);
 const cy = Math.round(candidate.bounds.y + candidate.bounds.height / 2);
+
 // This machine is a real, actively-used desktop (observed: another real
 // window, e.g. Firefox, competing for OS foreground focus mid-test). A
 // single click can lose that race against unrelated concurrent activity —
@@ -143,6 +144,23 @@ must(
   Boolean(afterType),
   "desktop_click immediately followed by desktop_type_text (no test-side wait) lands correctly — proves the settle fix is in the product path"
 );
+
+// Browser Annotation (desktop side): a raw screen point resolves to a real,
+// re-usable ref — not just the containing window (that's desktop_click's
+// job / windows_active). Run this ONLY after the desktop_click above
+// succeeded — that's real SendInput mouse input, which Windows treats as
+// legitimate focus-changing activity and reliably brings Notepad frontmost
+// at this exact point. Checked earlier in the file (before any click),
+// this failed against real desktop z-order: another real window (observed:
+// ChatGPT.exe) was topmost at that pixel, and the allowlist correctly
+// refused it — a hit-test genuinely depends on what's visually on top,
+// unlike windows_tree's element lookup which doesn't care about z-order.
+const annotatedPoint = await call("desktop_annotate_point", { x: cx, y: cy });
+must(
+  annotatedPoint && annotatedPoint.controlType === candidate.controlType,
+  `desktop_annotate_point resolves the point to an element with the same controlType as the known edit control, got: ${JSON.stringify(annotatedPoint)}`
+);
+must(typeof annotatedPoint.ref === "string" && annotatedPoint.ref.length > 0, "desktop_annotate_point returns a real, usable ref");
 
 // Negative test: a ref whose hwnd is real but whose embedded pid doesn't
 // match that window's CURRENT process must be rejected as stale, not

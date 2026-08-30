@@ -24,6 +24,8 @@ dialog anyway; only the OpenCode host can, and it does so by tool name only toda
 | desktop_secret_type | scope: `assertFocusAllowed` + secret bound to process name | value never returned to caller |
 | desktop_launch_app / desktop_close_window / desktop_kill_process | ask (config) | kill_process also has `assertKillablePid` (refuses self/parent/reserved pid) |
 | desktop_move / desktop_wait | none | no persistent side effect (cursor position only / no-op) |
+| desktop_annotate_point | scope: `assertPointAllowed` (process allowlist) | read-only (resolves a point to a ref), but still checked since it touches an arbitrary window's UIA tree |
+| browser_annotate_point | none (read-only) | scoped to the active tab like any other browser read |
 | windows_set_value / windows_invoke / windows_toggle / windows_select / windows_focus | scope: `mutatingCall` → `assertProcessAllowed` | checked BEFORE the mutating UIA call, using the ref's current-resolved process |
 | clipboard_read / clipboard_write | ask (config) | read defaults to metadata-only (length+sha256) even with the ask approved; `includeValue:true` opts into the raw text |
 | desktop_notify | none | display-only, no state mutation beyond a transient balloon |

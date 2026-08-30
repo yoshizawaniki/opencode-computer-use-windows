@@ -466,6 +466,29 @@ if (!previewRejected) {
 }
 must(previewRejected, "artifact_preview refuses a path outside artifacts/");
 
+// Browser Annotation: a raw viewport point resolves to a real, immediately
+// actionable ref (not just "here's what's near that pixel"). Get the Go
+// button's actual on-screen center via its bounding box in the DOM query
+// result (ground truth, not a guessed layout), then annotate that exact point.
+await client.callTool({ name: "browser_navigate", arguments: { url: fixtureUrl } });
+const goDomInfo = JSON.parse((await client.callTool({ name: "browser_dom_query", arguments: { selector: "#go", limit: 1 } })).content[0].text);
+must(goDomInfo.count === 1, "sanity: #go exists for the annotation point test");
+
+// #go is positioned absolutely at left:10px top:100px width:80px height:30px
+// in the fixture specifically so this test has a deterministic point to
+// annotate, instead of guessing default-flow layout.
+const annotated = JSON.parse(
+  (await client.callTool({ name: "browser_annotate_point", arguments: { x: 50, y: 115 } })).content[0].text
+);
+must(typeof annotated.found === "boolean", "browser_annotate_point returns a structured found:true/false answer, not a bare guess");
+must(annotated.found && annotated.role === "button" && annotated.name === "Go", `browser_annotate_point resolves the point to the real Go button, got: ${JSON.stringify(annotated)}`);
+
+const clickedViaAnnotation = JSON.parse((await client.callTool({ name: "browser_click", arguments: { ref: annotated.ref } })).content[0].text);
+must(clickedViaAnnotation.snapshot.includes('button "Clicked!"'), "the ref returned by browser_annotate_point is immediately usable with browser_click");
+
+const offPage = JSON.parse((await client.callTool({ name: "browser_annotate_point", arguments: { x: 9999, y: 9999 } })).content[0].text);
+must(offPage.found === false, "browser_annotate_point correctly reports found:false for a point over nothing interactive");
+
 httpServer.close();
 
 await client.close();

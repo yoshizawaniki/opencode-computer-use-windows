@@ -18,7 +18,7 @@ import {
   detachFromChrome,
   getMode,
 } from "../browser-session.js";
-import { snapshot, locatorFor } from "../snapshot.js";
+import { snapshot, locatorFor, elementInfoFor } from "../snapshot.js";
 import { resolveSecret } from "../secret-broker.js";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -180,6 +180,32 @@ export function registerBrowserTools(server) {
       await locatorFor(page, ref).fill(value, { timeout: 5000 });
       const result = await observedState(page, `secret_fill:${ref}=${name}`);
       return text({ ...result, filledLength: value.length });
+    }
+  );
+
+  server.registerTool(
+    "browser_annotate_point",
+    {
+      title: "Resolve a page point to a real, actionable element ref (Browser Annotation)",
+      description:
+        "Given a viewport coordinate the user pointed at (e.g. from a browser_screenshot they annotated), " +
+        "re-snapshots the page and returns the ref of the nearest tracked interactive ancestor at that point " +
+        "(role/name included) — usable immediately with browser_click/browser_type/etc. Returns found:false " +
+        "if the point isn't over any interactive element (e.g. plain text/background), which is a real " +
+        "answer, not a failure.",
+      inputSchema: { x: z.number(), y: z.number() },
+    },
+    async ({ x, y }) => {
+      const page = await getActivePage();
+      await snapshot(page); // fresh data-oc-ref tags before we query by point
+      const ref = await page.evaluate(({ x, y }) => {
+        const el = document.elementFromPoint(x, y);
+        const target = el?.closest("[data-oc-ref]");
+        return target?.getAttribute("data-oc-ref") ?? null;
+      }, { x, y });
+      if (!ref) return text({ found: false, x, y });
+      const info = elementInfoFor(ref);
+      return text({ found: true, ref, role: info?.role ?? null, name: info?.name ?? null });
     }
   );
 

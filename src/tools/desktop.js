@@ -93,6 +93,25 @@ export function registerDesktopTools(server) {
   );
 
   server.registerTool(
+    "desktop_annotate_point",
+    {
+      title: "Resolve a screen point to a real, actionable UI element (Browser Annotation)",
+      description:
+        "Given a screen coordinate the user pointed at (e.g. from a desktop_screenshot they annotated), " +
+        "returns the actual UI Automation element under that point as a real ref usable by windows_get_value/ " +
+        "windows_invoke/etc. — not just the containing window (see desktop_click for that). Refuses if the " +
+        "window under the point isn't in the process allowlist. May return null if the element's tree " +
+        "position couldn't be resolved to a stable path (rare, e.g. certain virtualized/owner-drawn controls) " +
+        "— that means genuinely no re-usable ref exists here, not a bug to retry past.",
+      inputSchema: { x: z.number(), y: z.number() },
+    },
+    async ({ x, y }) => {
+      await assertPointAllowed(x, y);
+      return text(await callUia({ action: "element_at_point", x, y }));
+    }
+  );
+
+  server.registerTool(
     "desktop_move",
     { title: "Move the mouse cursor", description: "Moves the cursor to (x, y) without clicking.", inputSchema: { x: z.number(), y: z.number() } },
     async ({ x, y }) => text(await callUia({ action: "move", x, y }))
