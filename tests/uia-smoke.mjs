@@ -35,6 +35,19 @@ function killAllNotepad() {
   });
 }
 
+// Independent ground-truth source for the screenshot-origin regression
+// test below — deliberately NOT going through this server's own uia.ps1,
+// so the assertion can't pass merely by agreeing with itself.
+function callPowershellRaw(command) {
+  return new Promise((resolve, reject) => {
+    const p = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command]);
+    let out = "", err = "";
+    p.stdout.on("data", (d) => (out += d));
+    p.stderr.on("data", (d) => (err += d));
+    p.on("exit", (code) => (code === 0 ? resolve(out) : reject(new Error(err || out))));
+  });
+}
+
 await killAllNotepad(); // clean slate
 await launchNotepad();
 
@@ -167,24 +180,33 @@ must(typeof annotatedPoint.ref === "string" && annotatedPoint.ref.length > 0, "d
 // capture's SCREEN origin, only width/height. On a monitor layout where
 // the virtual screen origin isn't (0,0) (this machine's second monitor is
 // at Y=-1080), a caller converting an IMAGE pixel back to a screen
-// coordinate without that origin lands on the WRONG monitor entirely —
-// the actual "point at a screenshot" workflow this tool exists for was
-// never exercised end-to-end by the tests above (they built screen points
-// directly from windows_tree's already-screen-absolute bounds). This test
-// closes that gap: take a real fullscreen screenshot, treat the known
-// edit control's center as if it were picked from that IMAGE (subtract
-// the origin), then convert back exactly as a real caller must (add the
-// origin back) and confirm it resolves to the SAME element.
+// coordinate without that origin lands on the WRONG monitor entirely.
+//
+// First attempt at this test (caught in commander review) computed
+// imagePixel = cx - fullShot.x then roundTripped = fullShot.x + imagePixel
+// — an algebraic identity that equals cx regardless of what fullShot.x
+// actually is, so it could never fail even with the original bug. Fixed
+// to check against GROUND TRUTH instead: ask Windows directly (a separate
+// PowerShell call, not this server) what VirtualScreen's origin actually
+// is, and assert desktop_screenshot's reported origin matches it exactly.
+const groundTruthOrigin = JSON.parse(
+  (await callPowershellRaw(
+    "Add-Type -AssemblyName System.Windows.Forms; $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen; @{x=$vs.X;y=$vs.Y} | ConvertTo-Json -Compress"
+  )).trim()
+);
 const fullShot = await call("desktop_screenshot", {});
-must(typeof fullShot.x === "number" && typeof fullShot.y === "number", `desktop_screenshot returns a real (x,y) capture origin, got: ${JSON.stringify(fullShot)}`);
+must(
+  fullShot.x === groundTruthOrigin.x && fullShot.y === groundTruthOrigin.y,
+  `desktop_screenshot's reported capture origin (${fullShot.x},${fullShot.y}) matches the OS's actual VirtualScreen origin (${groundTruthOrigin.x},${groundTruthOrigin.y}), independently measured`
+);
+// With the origin confirmed correct, the known element's screen position
+// must fall within the captured image's bounds when re-based to it —
+// a real (not identity) check now that the origin itself is verified.
 const imagePixelX = cx - fullShot.x;
 const imagePixelY = cy - fullShot.y;
-const roundTrippedScreenX = fullShot.x + imagePixelX;
-const roundTrippedScreenY = fullShot.y + imagePixelY;
-const viaScreenshotOrigin = await call("desktop_annotate_point", { x: roundTrippedScreenX, y: roundTrippedScreenY });
 must(
-  viaScreenshotOrigin && viaScreenshotOrigin.controlType === candidate.controlType,
-  `desktop_screenshot's origin correctly round-trips an image pixel back to the real element (screenshot origin was ${fullShot.x},${fullShot.y}), got: ${JSON.stringify(viaScreenshotOrigin)}`
+  imagePixelX >= 0 && imagePixelX < fullShot.width && imagePixelY >= 0 && imagePixelY < fullShot.height,
+  `the known element's position, re-based to the screenshot's origin, falls inside the captured image (${imagePixelX},${imagePixelY} within ${fullShot.width}x${fullShot.height})`
 );
 
 // Negative test: a ref whose hwnd is real but whose embedded pid doesn't

@@ -39,8 +39,9 @@ desktop-contention problem this session measured (a real window occluding a targ
 real but occasional and already visible to the caller — `desktop_annotate_point`/`desktop_click`
 fail loudly (refused, not silently wrong) when it happens, which is the acceptable mitigation
 at zero cost. **If the user upgrades to Windows 11 Pro**, re-evaluate: a second local session
-(free, built into Pro) becomes the right default, for the reasons in the original comparison
-below. Windows Sandbox remains worth a look later for a genuinely disposable, no-persistent-
+(free, built into Pro) becomes the right default — it solves the desktop-contention problem
+with existing OS mechanisms and no provisioning. Windows Sandbox remains worth a look later
+for a genuinely disposable, no-persistent-
 state execution mode (e.g. running an untrusted workflow file from Record & Replay) — a
 different requirement than desktop contention, not pursued now (YAGNI: no current caller
 needs it, and it's unavailable on this edition anyway).
