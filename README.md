@@ -47,18 +47,22 @@ package.json requires Node.js 20 or newer. Windows UIA/Desktop features require 
 
 The installer intentionally targets the currently verified OpenCode 1.x local-MCP configuration shape. A future incompatible OpenCode config schema must be independently validated before the installer changes.
 
-## Naming and package status
+## Naming and distribution
 
 The product and MCP provider name are **opencode-computer-use**.
 
-The public npm name opencode-computer-use is already occupied by another package. This project therefore uses the npm package name **opencode-computer-use-windows**. The exact opencode-computer-use GitHub repository name is also already used by another independent project, so this repository uses **opencode-computer-use-windows**.
+The exact opencode-computer-use GitHub repository name is already used by another independent project, so this repository uses **opencode-computer-use-windows**.
 
 Public repository: https://github.com/yoshizawaniki/opencode-computer-use-windows
+
+GitHub is the canonical distribution channel for this project. The project is **not published to npm**, and no npm account or npm publication is required to install it from a source checkout.
 
 ## Installation from a source checkout
 
 Install dependencies, preview the changes, then opt in only to the Windows processes and external browser origins you actually want to mutate:
 
+    git clone https://github.com/yoshizawaniki/opencode-computer-use-windows.git
+    cd opencode-computer-use-windows
     npm ci
     node .\scripts\install.mjs --dry-run
     node .\scripts\install.mjs --allow-process notepad.exe

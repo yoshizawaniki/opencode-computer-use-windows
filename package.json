@@ -1,6 +1,6 @@
 {
   "name": "opencode-computer-use-windows",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Safe browser and Windows computer-use tools for OpenCode, exposed through MCP.",
   "type": "module",
   "license": "MIT",
