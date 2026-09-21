@@ -14,6 +14,6 @@ All notable changes to this project will be documented here.
 - Scheduled tasks retain structured status metadata by default instead of raw OpenCode output.
 - UIA/Desktop focus verification uses observed foreground process state instead of fixed settle sleeps.
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2026-09-21
 
-First planned public release. No public release has been created yet.
+First public release.

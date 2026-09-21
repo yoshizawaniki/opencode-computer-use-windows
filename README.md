@@ -51,9 +51,9 @@ The installer intentionally targets the currently verified OpenCode 1.x local-MC
 
 The product and MCP provider name are **opencode-computer-use**.
 
-The public npm name opencode-computer-use is already occupied by another package. This checkout therefore prepares the npm package name **opencode-computer-use-windows**. The exact opencode-computer-use GitHub repository name is also already used by another independent project, so the planned repository slug is opencode-computer-use-windows.
+The public npm name opencode-computer-use is already occupied by another package. This project therefore uses the npm package name **opencode-computer-use-windows**. The exact opencode-computer-use GitHub repository name is also already used by another independent project, so this repository uses **opencode-computer-use-windows**.
 
-No npm package or GitHub repository has been published by this project yet.
+Public repository: https://github.com/yoshizawaniki/opencode-computer-use-windows
 
 ## Installation from a source checkout
 
