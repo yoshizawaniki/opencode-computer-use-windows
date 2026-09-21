@@ -12,13 +12,13 @@ dialog anyway; only the OpenCode host can, and it does so by tool name only toda
 |---|---|---|
 | browser_navigate | scope: `assertNavigateAllowed` (blocks chrome/devtools/extension in attach mode; scopes file:// to project root) | |
 | browser_back / browser_forward | scope: routed through `getActivePage()` choke point | catches history landing on a blocked scheme |
-| browser_click / browser_type / browser_select / browser_hover / browser_scroll / browser_key / browser_reload | **none (origin-level)** | see "Known gap" below |
-| browser_secret_fill | scope: secret bound to page origin (`resolveSecret`) | value never returned to caller |
-| browser_upload | scope: `assertUploadAllowed` (path under artifacts/uploads) | |
-| browser_click_and_wait_for_download | scope: `downloadPath()` sanitizes filename (`path.basename`) | |
+| browser_click / browser_type / browser_select / browser_hover / browser_scroll / browser_key / browser_reload | scope: `getMutationPage` -> `assertBrowserMutationAllowed` | launch: loopback/project-file safe defaults + exact external allowlist; attach: separate exact allowlist, no implicit safe origin |
+| browser_secret_fill | scope: browser origin guard + secret bound to page origin (`resolveSecret`) | value never returned to caller |
+| browser_upload | scope: browser origin guard + `assertUploadAllowed` (path under artifacts/uploads) | |
+| browser_click_and_wait_for_download | scope: browser origin guard + `downloadPath()` sanitizes filename (`path.basename`) | |
 | browser_tab_close / browser_session_close | **none** | closes agent-owned tabs (launch mode); in attach mode can close a real user tab — accepted risk of opting into `browser_attach` (see below) |
 | browser_attach | ask (config) | entry point to attach mode; gates everything attach-mode-specific |
-| browser_evaluate | ask (config) + env var `OPENCODE_CU_ALLOW_EVAL` + hard-refused in attach mode | most heavily gated tool in the file |
+| browser_evaluate | ask (config) + env var `OPENCODE_CU_ALLOW_EVAL` + browser origin guard + hard-refused in attach mode | most heavily gated browser tool |
 | desktop_click / desktop_drag / desktop_scroll | scope: `assertPointAllowed` (process allowlist) | |
 | desktop_type_text / desktop_key | scope: `assertFocusAllowed` (process allowlist) | |
 | desktop_secret_type | scope: `assertFocusAllowed` + secret bound to process name | value never returned to caller |
@@ -30,14 +30,14 @@ dialog anyway; only the OpenCode host can, and it does so by tool name only toda
 | clipboard_read / clipboard_write | ask (config) | read defaults to metadata-only (length+sha256) even with the ask approved; `includeValue:true` opts into the raw text |
 | desktop_notify | none | display-only, no state mutation beyond a transient balloon |
 | artifact_preview | scope: path restricted to `artifacts/` | same discipline as upload/download path scoping |
-| scheduled_task_register / scheduled_task_delete | ask (config) | also namespace-scoped: name must start with `OpenCodeUpgrade-`, `/Create` never passes `/F` (never overwrites an existing task), and register refuses up front if a same-named prompt/meta file already exists rather than overwriting it before a possibly-failing `/Create`. **Note:** `artifacts/tasks/<name>.log` (the wrapper script's captured `opencode run` output) is NOT scrubbed — unlike task_checkpoint_save, nothing runs it through redaction.js. Treat it the same as any other raw log. |
-| scheduled_task_list | none (read-only) | filtered to the `OpenCodeUpgrade-` namespace only |
+| scheduled_task_register / scheduled_task_delete | ask (config) | new names use `OpenCodeComputerUse-`; delete also accepts legacy `OpenCodeUpgrade-` for migration cleanup. Creation never passes `/F`. Runtime persists metadata-only `*.status.json` by default; raw output exists only with explicit `OPENCODE_CU_SCHEDULE_DEBUG_LOG=1` as `*.debug.log`. |
+| scheduled_task_list | none (read-only) | filtered to current `OpenCodeComputerUse-` and legacy `OpenCodeUpgrade-` namespaces only |
 | task_checkpoint_save / _load / _list | none (tool-level `allow`) | writes/reads only under `artifacts/tasks/`; save scrubs known secret values and caps size at 50000 chars (fail loud, not silently truncated) |
-| workflow_record_start / _stop / _discard / _edit / _delete / _replay | none (tool-level `allow`) | `workflow_replay` dispatches in-process via tool-registry.js, which preserves each step's **scope** guard (assertNavigateAllowed/assertProcessAllowed/etc. still run) but CANNOT trigger the OpenCode host's **ask** dialog — that only fires for a real MCP tool call by name. Found in commander review: this made every ask-gated tool (desktop_kill_process, desktop_launch_app, desktop_close_window, browser_attach, browser_evaluate, clipboard_read, clipboard_write) callable unattended via a crafted workflow file. Fixed with `REPLAY_ALLOWED`, a fail-closed allowlist in `src/workflow.js` — those 7 tools are refused at replay dispatch regardless of what a workflow file contains, and any FUTURE ask-gated tool defaults to refused until explicitly added to the allowlist (the safe direction: a forgotten tool is blocked, not silently bypassable). |
+| workflow_record_start / _stop / _discard / _edit / _delete / _replay | none (tool-level `allow`) | `workflow_replay` dispatches normal registered handlers in-process, so browser origin/process/path scope guards still execute. Because in-process dispatch cannot trigger OpenCode's host `ask` dialog, `REPLAY_ALLOWED` is fail-closed: ask-gated tools are excluded and every future tool defaults to blocked until explicitly reviewed. |
 
 ## Empirical finding: non-interactive `opencode run` auto-REJECTS ask permissions
 
-Measured directly (not assumed) for Phase E's Scheduled Tasks design: running
+Measured directly (not assumed) for the Scheduled Tasks design: running
 `opencode run "<prompt that calls an ask-gated tool>"` with stdin closed and no TTY produces:
 
 ```
@@ -54,23 +54,16 @@ the design doc's "Scheduled Tasks からの起動でも Permission ルールは�
 for this specific risk. No additional unattended-mode guard was added because none was needed
 — confirmed by measurement, not assumed by design.
 
-## Known gap: no origin-level permission for browser_click/type/select/hover/scroll/key
+## Browser mutation scope
 
-The design doc's Permission Broker section lists "site / origin" as a control dimension, and
-requires ask/deny by default for actions like sending email, posting, or purchasing. This
-codebase has **no such control** — `browser_click`/`browser_type`/etc. can act on any origin
-the active tab is on, including submitting a form or clicking "Send".
+OpenCode 1.x host permission is tool-name scoped, not argument/origin aware. The MCP server
+therefore enforces the target origin itself at a single page-mutation choke point:
+`getMutationPage()` calls `assertBrowserMutationAllowed()` before generic page-side mutation.
+Launch mode is safe-by-default for loopback HTTP(S) and project-local `file://` fixtures;
+external origins require exact entries in `OPENCODE_CU_BROWSER_ORIGINS`. Attached Chrome
+uses the separate `OPENCODE_CU_ATTACH_ORIGINS` allowlist with no implicit local exception.
+Workflow replay reaches the same handlers, so it does not bypass this scope.
 
-This is not fixed here because it isn't a scoping bug like the others in this table — it needs
-either (a) OpenCode's host-side permission system to support argument-aware prompts (asking
-per-call based on the target URL/element, not just per tool name), which the current
-tool-name-only `permission` config cannot express, or (b) page-content-aware heuristics
-("does this button say Send/Submit/Buy") bolted onto generic click/type tools, which would be
-unreliable enough to give false confidence rather than real safety — worse than an honest gap.
-
-Documented as an accepted residual risk. The practical mitigation available today is
-behavioral, not technical: the `browser-use` Skill (Phase 6) instructs the agent to ask the
-user in chat before clicking/submitting anything that sends a message, posts content, or
-spends money — same as the general orchestration rule already in effect, just made explicit
-at the Skill level. Escalated to commander for awareness, not because there's an
-implementable-today fix being deferred.
+This is intentionally not a UI-text heuristic. Labels such as Send, Buy, or Submit are not
+security boundaries. Human approval for consequential actions remains an orchestration
+requirement on top of deterministic origin scope.

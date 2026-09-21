@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   getContext,
   getActivePage,
+  getMutationPage,
   selectTab,
   listTabs,
   newTab,
@@ -115,7 +116,7 @@ export function registerBrowserTools(server) {
     "browser_reload",
     { title: "Reload", description: "Reloads the active tab and returns the resulting state.", inputSchema: {} },
     async () => {
-      const page = await getActivePage();
+      const page = await getMutationPage();
       await page.reload({ waitUntil: "load" });
       return text(await observedState(page, "reload"));
     }
@@ -133,7 +134,7 @@ export function registerBrowserTools(server) {
       inputSchema: { ref: z.string().describe('Element ref from browser_snapshot, e.g. "2-4"') },
     },
     async ({ ref }) => {
-      const page = await getActivePage();
+      const page = await getMutationPage();
       const context = await getContext();
       const locator = locatorFor(page, ref);
       await withPopupTracking(context, () => locator.click({ timeout: 5000 }));
@@ -152,7 +153,7 @@ export function registerBrowserTools(server) {
       inputSchema: { ref: z.string().describe('Element ref from browser_snapshot, e.g. "2-4"'), text: z.string() },
     },
     async ({ ref, text: value }) => {
-      const page = await getActivePage();
+      const page = await getMutationPage();
       const locator = locatorFor(page, ref);
       await locator.fill(value, { timeout: 5000 });
       const actualValue = await locator.inputValue().catch(() => null);
@@ -174,7 +175,7 @@ export function registerBrowserTools(server) {
       inputSchema: { ref: z.string(), name: z.string().describe("registered secret name") },
     },
     async ({ ref, name }) => {
-      const page = await getActivePage();
+      const page = await getMutationPage();
       const origin = new URL(page.url()).origin;
       const value = await resolveSecret(name, origin);
       await locatorFor(page, ref).fill(value, { timeout: 5000 });
@@ -217,7 +218,7 @@ export function registerBrowserTools(server) {
       inputSchema: { ref: z.string(), value: z.string().describe("option value or visible label") },
     },
     async ({ ref, value }) => {
-      const page = await getActivePage();
+      const page = await getMutationPage();
       const locator = locatorFor(page, ref);
       await locator.selectOption(value, { timeout: 5000 }).catch(() => locator.selectOption({ label: value }, { timeout: 5000 }));
       return text(await observedState(page, `select:${ref}=${value}`));
@@ -228,7 +229,7 @@ export function registerBrowserTools(server) {
     "browser_hover",
     { title: "Hover an element", description: "Hovers the element with the given ref, then returns the resulting page state.", inputSchema: { ref: z.string() } },
     async ({ ref }) => {
-      const page = await getActivePage();
+      const page = await getMutationPage();
       await locatorFor(page, ref).hover({ timeout: 5000 });
       return text(await observedState(page, `hover:${ref}`));
     }
@@ -242,7 +243,7 @@ export function registerBrowserTools(server) {
       inputSchema: { deltaX: z.number().default(0), deltaY: z.number().default(0) },
     },
     async ({ deltaX, deltaY }) => {
-      const page = await getActivePage();
+      const page = await getMutationPage();
       await page.mouse.wheel(deltaX, deltaY);
       return text(await observedState(page, `scroll:${deltaX},${deltaY}`));
     }
@@ -256,7 +257,7 @@ export function registerBrowserTools(server) {
       inputSchema: { key: z.string() },
     },
     async ({ key }) => {
-      const page = await getActivePage();
+      const page = await getMutationPage();
       await page.keyboard.press(key);
       return text(await observedState(page, `key:${key}`));
     }
@@ -293,7 +294,7 @@ export function registerBrowserTools(server) {
       inputSchema: { ref: z.string(), paths: z.array(z.string()).describe("paths under the artifacts/uploads directory") },
     },
     async ({ ref, paths }) => {
-      const page = await getActivePage();
+      const page = await getMutationPage();
       const allowed = paths.map(assertUploadAllowed);
       await locatorFor(page, ref).setInputFiles(allowed);
       return text(await observedState(page, `upload:${ref}`));
@@ -310,7 +311,7 @@ export function registerBrowserTools(server) {
       inputSchema: { ref: z.string(), timeoutMs: z.number().default(15000) },
     },
     async ({ ref, timeoutMs }) => {
-      const page = await getActivePage();
+      const page = await getMutationPage();
       const [download] = await Promise.all([
         page.waitForEvent("download", { timeout: timeoutMs }),
         locatorFor(page, ref).click({ timeout: 5000 }),

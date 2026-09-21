@@ -12,7 +12,7 @@ import { scrubKnownSecrets } from "./redaction.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 // Separate from artifacts/tasks/ (scheduled-tasks.js's directory) — found
-// in commander review: both used the SAME directory, so listCheckpoints'
+// Keep checkpoints separate from scheduled-task metadata so listCheckpoints'
 // ".json" filter also matched scheduled-tasks.js's <name>.meta.json files,
 // producing ghost entries with no real checkpoint fields.
 const CHECKPOINTS_DIR = path.join(ROOT, "..", "artifacts", "checkpoints");

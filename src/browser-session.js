@@ -6,6 +6,7 @@ import { chromium } from "playwright";
 import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { assertBrowserMutationAllowed } from "./browser-origin-policy.js";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PROFILE_DIR = path.join(ROOT, "artifacts", "browser-profile");
@@ -25,6 +26,16 @@ let lastDialog = null; // {type, message, defaultValue, at}
 const consoleLogs = new Map(); // tabId -> [{type, text, at}]
 const networkLogs = new Map(); // tabId -> [{url, method, resourceType, status, ok, failure, durationMs, at}]
 const LOG_CAP = 300; // never let an unbounded buffer grow forever or leak into a huge tool result
+const HEADLESS = process.env.OPENCODE_CU_HEADLESS === "1";
+
+function logSafeUrl(urlString) {
+  try {
+    const u = new URL(urlString);
+    return u.origin + u.pathname;
+  } catch {
+    return "<invalid-url>";
+  }
+}
 
 function pushCapped(map, id, entry) {
   const list = map.get(id) ?? [];
@@ -138,7 +149,7 @@ function trackPage(playwrightPage, presetId = null) {
   playwrightPage.on("requestfinished", async (req) => {
     const res = await req.response().catch(() => null);
     pushCapped(networkLogs, id, {
-      url: req.url(),
+      url: logSafeUrl(req.url()),
       method: req.method(),
       resourceType: req.resourceType(),
       status: res?.status() ?? null,
@@ -149,7 +160,7 @@ function trackPage(playwrightPage, presetId = null) {
   });
   playwrightPage.on("requestfailed", (req) => {
     pushCapped(networkLogs, id, {
-      url: req.url(),
+      url: logSafeUrl(req.url()),
       method: req.method(),
       resourceType: req.resourceType(),
       status: null,
@@ -188,7 +199,7 @@ export function clearLogs(tabId) {
 async function ensureContext() {
   if (!contextPromise) {
     mkdirSync(PROFILE_DIR, { recursive: true });
-    contextPromise = chromium.launchPersistentContext(PROFILE_DIR, { headless: false });
+    contextPromise = chromium.launchPersistentContext(PROFILE_DIR, { headless: HEADLESS });
     const context = await contextPromise;
     context.on("page", (p) => {
       if (![...tabs.values()].includes(p)) trackPage(p);
@@ -299,6 +310,16 @@ export async function getActivePage({ skipUrlCheck = false } = {}) {
   const page = tabs.get(activeTabId);
   if (!page || page.isClosed()) throw new Error("no active tab");
   if (!skipUrlCheck) assertNavigateAllowed(page.url());
+  return page;
+}
+
+// Sole browser-mutation choke point. Any tool that can cause page-side
+// interaction (click/type/select/hover/scroll/key/reload/upload/evaluate)
+// must acquire its page here rather than via getActivePage(). Workflow replay
+// dispatches the same wrapped handlers, so it cannot route around this guard.
+export async function getMutationPage() {
+  const page = await getActivePage();
+  assertBrowserMutationAllowed(page.url(), { mode });
   return page;
 }
 

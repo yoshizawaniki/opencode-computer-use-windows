@@ -1,4 +1,4 @@
-// Phase 5 (Chrome Bridge) smoke test — launches a SCRATCH Chrome instance
+// Chrome Bridge smoke test — launches a SCRATCH Chrome instance
 // (dedicated user-data-dir, never the user's real profile) with a debug
 // port, attaches our MCP server to it, and verifies the explicit-attach
 // contract end to end. Never touches the user's actual Chrome.
@@ -33,7 +33,7 @@ rmSync(SCRATCH_PROFILE, { recursive: true, force: true });
 mkdirSync(SCRATCH_PROFILE, { recursive: true });
 
 // Local fixture, not an external site — matches the project's existing
-// "no external network dependency in tests" rule (Phase 1). Content isn't
+// "no external network dependency in tests" rule. Content isn't
 // asserted; this just needs to be a real pre-existing tab.
 const fixtureUrl = pathToFileURL(path.join(root, "tests", "fixtures", "basic.html")).href;
 const chromeProc = spawn(
@@ -76,6 +76,18 @@ try {
 
   const tabsAfter = await call("browser_tabs_list");
   must(tabsAfter.find((t) => t.id === preexisting.id)?.selected === true, "the selected tab now shows selected:true");
+
+  // Attach mode has a separate mutation allowlist and intentionally has no
+  // implicit project-file/localhost exception. Selecting a tab is not the
+  // same as granting mutation permission for its origin.
+  let attachMutationRejected = false;
+  try {
+    const r = await client.callTool({ name: "browser_reload", arguments: {} });
+    attachMutationRejected = r.isError === true;
+  } catch {
+    attachMutationRejected = true;
+  }
+  must(attachMutationRejected, "attach-mode page mutation is refused without OPENCODE_CU_ATTACH_ORIGINS");
 
   // Negative test: a tab opened by something OTHER than the agent (simulating
   // the user opening a new tab in the attached window — the (c) usage

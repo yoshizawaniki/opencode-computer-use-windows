@@ -1,17 +1,71 @@
 {
-  "name": "opencode-upgrade",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "node tests/redaction-pattern.test.mjs && node tests/secret-broker.test.mjs && node tests/smoke.mjs && node tests/uia-smoke.mjs && node tests/attach-smoke.mjs && node tests/checkpoint-and-scheduled.test.mjs"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "name": "opencode-computer-use-windows",
+  "version": "0.1.0",
+  "description": "Safe browser and Windows computer-use tools for OpenCode, exposed through MCP.",
   "type": "module",
+  "license": "MIT",
+  "author": "Yoshizawaniki",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yoshizawaniki/opencode-computer-use-windows.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yoshizawaniki/opencode-computer-use-windows/issues"
+  },
+  "homepage": "https://github.com/yoshizawaniki/opencode-computer-use-windows#readme",
+  "keywords": [
+    "opencode",
+    "mcp",
+    "computer-use",
+    "browser-automation",
+    "windows",
+    "ui-automation",
+    "playwright"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "os": [
+    "win32"
+  ],
+  "bin": {
+    "opencode-computer-use": "src/server.js",
+    "opencode-computer-use-install": "scripts/install.mjs",
+    "opencode-computer-use-uninstall": "scripts/uninstall.mjs"
+  },
+  "files": [
+    "src/",
+    "scripts/",
+    "skills/",
+    "examples/",
+    "docs/ARCHITECTURE.md",
+    "docs/SECURITY-MODEL.md",
+    "docs/DEVELOPMENT.md",
+    "docs/MIGRATION.md",
+    "README.md",
+    "LICENSE",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "test": "npm run test:unit && npm run test:browser",
+    "test:unit": "node tests/redaction-pattern.test.mjs && node tests/secret-broker.test.mjs && node tests/security-policy.test.mjs && node tests/installer.test.mjs",
+    "test:browser": "node tests/smoke.mjs",
+    "test:windows": "node tests/uia-smoke.mjs",
+    "test:attach": "node tests/attach-smoke.mjs",
+    "test:scheduler": "node tests/checkpoint-and-scheduled.test.mjs",
+    "test:e2e": "npm run test:browser && npm run test:windows && npm run test:attach && npm run test:scheduler",
+    "test:all": "npm run test:unit && npm run test:e2e",
+    "check:syntax": "node scripts/check-syntax.mjs",
+    "check:secrets": "node scripts/security-scan.mjs",
+    "check:package": "node scripts/check-package-content.mjs",
+    "check:licenses": "node scripts/check-licenses.mjs",
+    "prepack": "npm run check:syntax && npm run check:secrets && npm run check:package"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "jsonc-parser": "^3.3.1",
     "pixelmatch": "^7.2.0",
     "playwright": "^1.62.1",
     "pngjs": "^7.0.0",

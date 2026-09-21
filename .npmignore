@@ -1,0 +1,9 @@
+artifacts/
+node_modules/
+.git/
+.github/
+tests/
+docs/history/
+*.bundle
+*.zip
+*.tgz

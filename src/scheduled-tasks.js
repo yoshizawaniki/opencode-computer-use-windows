@@ -18,11 +18,17 @@ const WRAPPER = path.join(ROOT, "scripts", "run-scheduled-task.ps1");
 // /Create is called without /F (never overwrites), and delete/list are
 // hard-scoped to this prefix so a crafted name can't target an unrelated
 // scheduled task already on the system.
-const NAME_PREFIX = "OpenCodeUpgrade-";
+const NAME_PREFIX = "OpenCodeComputerUse-";
+const LEGACY_NAME_PREFIX = "OpenCodeUpgrade-";
 
-function assertValidName(name) {
-  if (!name.startsWith(NAME_PREFIX) || !/^[A-Za-z0-9_-]+$/.test(name)) {
-    throw new Error(`scheduled task name must start with "${NAME_PREFIX}" and match [A-Za-z0-9_-]+, got "${name}"`);
+function assertValidName(name, { allowLegacy = false } = {}) {
+  const validPrefix = name.startsWith(NAME_PREFIX) || (allowLegacy && name.startsWith(LEGACY_NAME_PREFIX));
+  if (!validPrefix || !/^[A-Za-z0-9_-]+$/.test(name)) {
+    throw new Error(
+      `scheduled task name must start with "${NAME_PREFIX}"` +
+        (allowLegacy ? ` (legacy "${LEGACY_NAME_PREFIX}" is accepted for cleanup only)` : "") +
+        ` and match [A-Za-z0-9_-]+, got "${name}"`
+    );
   }
 }
 
@@ -44,7 +50,7 @@ export async function registerScheduledTask({ name, prompt, model, schedule }) {
   mkdirSync(TASKS_DIR, { recursive: true });
   const promptFile = path.join(TASKS_DIR, `${name}.prompt.txt`);
   const metaFile = path.join(TASKS_DIR, `${name}.meta.json`);
-  // Found in commander review: writing these before /Create meant a
+  // Writing these before /Create would mean a
   // same-named EXISTING task's prompt got silently overwritten even when
   // /Create then failed (no /F, so the task itself wasn't touched, but its
   // scheduled behavior was — the caller only sees the /Create error and
@@ -92,7 +98,13 @@ export async function listScheduledTasks() {
   return output
     .split("\n")
     .map((line) => line.trim())
-    .filter((line) => line.startsWith(`"\\${NAME_PREFIX}`) || line.startsWith(`"${NAME_PREFIX}`))
+    .filter(
+      (line) =>
+        line.startsWith(`"\\${NAME_PREFIX}`) ||
+        line.startsWith(`"${NAME_PREFIX}`) ||
+        line.startsWith(`"\\${LEGACY_NAME_PREFIX}`) ||
+        line.startsWith(`"${LEGACY_NAME_PREFIX}`)
+    )
     .map((line) => {
       const cols = line.split('","').map((c) => c.replace(/^"|"$/g, ""));
       return { name: cols[0]?.replace(/^\\/, ""), nextRunTime: cols[1], status: cols[2] };
@@ -100,14 +112,16 @@ export async function listScheduledTasks() {
 }
 
 export async function deleteScheduledTask(name) {
-  assertValidName(name);
+  // Cleanup compatibility only: tasks created by the pre-OSS private build
+  // used OpenCodeUpgrade-. New registrations can never use that prefix.
+  assertValidName(name, { allowLegacy: true });
   try {
     await runCommand("schtasks.exe", ["/Delete", "/TN", name, "/F"]);
   } finally {
     // Clean up the prompt/meta files regardless of whether the schtasks
     // entry itself existed — a failed prior /Create (bad schedule args,
     // etc.) can leave these orphaned with no scheduled task to delete.
-    for (const suffix of [".prompt.txt", ".meta.json"]) {
+    for (const suffix of [".prompt.txt", ".meta.json", ".status.json", ".debug.log", ".log"]) {
       const f = path.join(TASKS_DIR, `${name}${suffix}`);
       if (existsSync(f)) unlinkSync(f);
     }

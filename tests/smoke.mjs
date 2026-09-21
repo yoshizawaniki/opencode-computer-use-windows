@@ -263,7 +263,7 @@ const btnCount = (stress.snapshot.match(/button "btn/g) || []).length;
 must(btnCount <= 150, `snapshot caps element count on a large page, got ${btnCount} elements`);
 must(stress.snapshot.includes("truncated"), "snapshot flags truncation instead of silently dropping elements");
 
-// --- Phase 2: DevTools / secret non-exposure -----------------------------
+// --- DevTools / secret non-exposure --------------------------------------
 
 // Real HTTP server (stdlib only) so we can set a real Set-Cookie header —
 // file:// URLs can't carry cookies reliably, and a structural-only test
@@ -417,7 +417,7 @@ must(replayThrew, "replaying a workflow with an unresolved requiresManualEdit st
 await client.callTool({ name: "workflow_delete", arguments: { name: "smoke-wf-secret" } });
 
 // workflow_replay must never bypass the OpenCode host's ask-permission
-// dialog — found in commander review: replay dispatches tool handlers
+// dialog: replay dispatches tool handlers
 // IN-PROCESS, which never goes through the host's per-tool-call ask gate.
 // A crafted workflow file naming an ask-gated tool (desktop_kill_process
 // here — any pid works, the allowlist check must reject it before ever
@@ -435,6 +435,41 @@ if (!dangerousReplayRefused) {
 }
 must(dangerousReplayRefused, "workflow_replay refuses an ask-gated tool (desktop_kill_process) rather than bypassing the host's approval dialog");
 await client.callTool({ name: "workflow_delete", arguments: { name: "smoke-wf-danger" } });
+
+// Origin-scope regression: navigation/read is allowed to an otherwise
+// non-allowlisted scheme, but page-side mutation must fail at the shared
+// mutation choke point. data: gives us a deterministic no-network page.
+const untrustedDataUrl = "data:text/html,<title>origin-guard</title><button>do-not-mutate</button>";
+const untrustedNav = JSON.parse(
+  (await client.callTool({ name: "browser_navigate", arguments: { url: untrustedDataUrl } })).content[0].text
+);
+must(untrustedNav.title === "origin-guard", "read/navigation remains available without granting mutation scope");
+let directOriginMutationRejected = false;
+try {
+  const r = await client.callTool({ name: "browser_key", arguments: { key: "Enter" } });
+  directOriginMutationRejected = r.isError === true;
+} catch {
+  directOriginMutationRejected = true;
+}
+must(directOriginMutationRejected, "generic browser mutation is refused outside the configured origin scope");
+
+await client.callTool({
+  name: "workflow_edit",
+  arguments: {
+    name: "smoke-wf-origin-bypass",
+    stepsJson: JSON.stringify([{ tool: "browser_key", args: { key: "Enter" } }]),
+  },
+});
+let replayOriginMutationRejected = false;
+try {
+  const r = await client.callTool({ name: "workflow_replay", arguments: { name: "smoke-wf-origin-bypass", params: {} } });
+  replayOriginMutationRejected = r.isError === true;
+} catch {
+  replayOriginMutationRejected = true;
+}
+must(replayOriginMutationRejected, "workflow_replay cannot bypass the browser origin mutation guard");
+await client.callTool({ name: "workflow_delete", arguments: { name: "smoke-wf-origin-bypass" } });
+await client.callTool({ name: "browser_navigate", arguments: { url: fixtureUrl } });
 
 // Clipboard: metadata-only by default, real value opt-in, write round-trips.
 if (process.platform === "win32") {

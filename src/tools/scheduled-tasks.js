@@ -12,7 +12,7 @@ export function registerScheduledTaskTools(server) {
       title: "Register a Windows scheduled task that runs an opencode prompt",
       description:
         "Registers a Windows Task Scheduler entry (schtasks) that runs `opencode run <prompt>` " +
-        "non-interactively at the given schedule. The task name MUST start with \"OpenCodeUpgrade-\" — this " +
+        "non-interactively at the given schedule. The task name MUST start with \"OpenCodeComputerUse-\" — this " +
         "tool can only create/list/delete tasks it namespaced itself, never touch an existing unrelated " +
         "scheduled task. Confirmed by measurement: a non-interactive opencode run auto-REJECTS any " +
         "ask-gated tool call (desktop_kill_process, browser_attach, etc.) — the same permission rules apply " +
@@ -21,7 +21,7 @@ export function registerScheduledTaskTools(server) {
         "even while the user is actively using the PC — schedule it for a time the user won't be at the " +
         "keyboard, not just \"whenever is convenient.\"",
       inputSchema: {
-        name: z.string().describe('must start with "OpenCodeUpgrade-"'),
+        name: z.string().describe('must start with "OpenCodeComputerUse-"'),
         prompt: z.string().describe("the instruction opencode run will execute, max 20000 chars"),
         model: z.string().describe("e.g. opencode/nemotron-3.5-lightning-free — required, the default provider may not be reachable unattended"),
         schedule: z.object({
@@ -32,8 +32,8 @@ export function registerScheduledTaskTools(server) {
             .string()
             .optional()
             .describe(
-              "optional for ONCE (defaults to today) — format is the SYSTEM LOCALE's schtasks date format " +
-                '(this machine expects "yyyy/MM/dd", not necessarily MM/DD/YYYY) — omit rather than guess wrong'
+              "optional for ONCE (defaults to today) — format follows the Windows system locale; " +
+                "omit the date unless the local schtasks date format is known"
             ),
         }),
       },
@@ -43,7 +43,7 @@ export function registerScheduledTaskTools(server) {
 
   server.registerTool(
     "scheduled_task_list",
-    { title: "List OpenCodeUpgrade scheduled tasks", description: "Lists scheduled tasks this server registered (name/nextRunTime/status), never other tasks on the system.", inputSchema: {} },
+    { title: "List opencode-computer-use scheduled tasks", description: "Lists current OpenCodeComputerUse-* tasks plus legacy OpenCodeUpgrade-* tasks from pre-OSS builds, never unrelated tasks.", inputSchema: {} },
     async () => text(await listScheduledTasks())
   );
 
@@ -51,7 +51,7 @@ export function registerScheduledTaskTools(server) {
     "scheduled_task_delete",
     {
       title: "Delete a scheduled task",
-      description: "Deletes an OpenCodeUpgrade-* scheduled task and its saved prompt/meta files. Gated by config permission (ask).",
+      description: "Deletes an OpenCodeComputerUse-* task (or a legacy OpenCodeUpgrade-* task from this project's private builds) and its saved runtime files. Gated by config permission (ask).",
       inputSchema: { name: z.string() },
     },
     async ({ name }) => text(await deleteScheduledTask(name))

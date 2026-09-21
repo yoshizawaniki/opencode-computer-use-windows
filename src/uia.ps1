@@ -5,7 +5,7 @@
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Windows.Forms, System.Drawing, WindowsBase
 
-# Desktop Computer Use (Phase 4) fallback: coordinate/keyboard input via real
+# Desktop Computer Use fallback: coordinate/keyboard input via real
 # SendInput events (not SendKeys/WinForms simulation), so it works against
 # elevated windows and apps that ignore synthetic window messages.
 Add-Type -TypeDefinition @"
@@ -42,6 +42,15 @@ public static class NativeInput
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool SetCursorPos(int x, int y);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
 
     public static void MoveTo(int x, int y) { SetCursorPos(x, y); }
 
@@ -85,6 +94,37 @@ public static class NativeInput
         SendInput(1, up, Marshal.SizeOf(typeof(INPUT)));
     }
 
+    public static void TypeUnicode(string text)
+    {
+        if (String.IsNullOrEmpty(text)) return;
+        INPUT[] inputs = new INPUT[text.Length * 2];
+        for (int i = 0; i < text.Length; i++)
+        {
+            inputs[i * 2].type = INPUT_KEYBOARD;
+            inputs[i * 2].u.ki.wScan = text[i];
+            inputs[i * 2].u.ki.dwFlags = KEYEVENTF_UNICODE;
+            inputs[i * 2 + 1].type = INPUT_KEYBOARD;
+            inputs[i * 2 + 1].u.ki.wScan = text[i];
+            inputs[i * 2 + 1].u.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
+        }
+        uint sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
+        if (sent != inputs.Length) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "SendInput did not accept the full unicode input batch");
+    }
+
+    public static uint ForegroundProcessId()
+    {
+        IntPtr hwnd = GetForegroundWindow();
+        if (hwnd == IntPtr.Zero) return 0;
+        uint pid;
+        GetWindowThreadProcessId(hwnd, out pid);
+        return pid;
+    }
+
+    public static void TryEnablePerMonitorV2()
+    {
+        try { SetProcessDpiAwarenessContext(new IntPtr(-4)); } catch { }
+    }
+
     public static void KeyVk(ushort vk, bool keyUp)
     {
         INPUT[] arr = new INPUT[1];
@@ -95,6 +135,7 @@ public static class NativeInput
     }
 }
 "@
+[NativeInput]::TryEnablePerMonitorV2()
 
 # ---- shared helpers -------------------------------------------------------
 
@@ -251,7 +292,7 @@ function ConvertTo-ElementJson($Element, [string]$Ref) {
 # Shared walk used by find/wait_for: BFS over descendants (ControlView) from ref,
 # matching automationId/name/controlType (AND of whichever are given). Capped at
 # $Limit results and a hard node-visit safety cap so a huge tree can't hang the call.
-function Find-Elements([string]$Ref, $AutomationId, $Name, $ControlType, [int]$Limit) {
+function Find-Elements([string]$Ref, $AutomationId, $Name, $ControlType, $ClassName, [int]$Limit) {
     $resolved = Resolve-Ref $Ref
     $basePath = ($Ref.Split('|', 3))[2]
     $ctObj = $null
@@ -281,6 +322,7 @@ function Find-Elements([string]$Ref, $AutomationId, $Name, $ControlType, [int]$L
         if ($AutomationId -and $cur.AutomationId -ne $AutomationId) { $isMatch = $false }
         if ($isMatch -and $Name -and $cur.Name -ne $Name) { $isMatch = $false }
         if ($isMatch -and $ctObj -and $cur.ControlType -ne $ctObj) { $isMatch = $false }
+        if ($isMatch -and $ClassName -and $cur.ClassName -ne $ClassName) { $isMatch = $false }
         if ($isMatch) {
             $refStr = Make-Ref -Hwnd $resolved.Hwnd -OwnerPid $resolved.Pid -Path $item.Path
             $results += (ConvertTo-ElementJson -Element $el -Ref $refStr)
@@ -409,7 +451,7 @@ try {
 
         'find' {
             $limit = if ($null -ne $req.limit) { [int]$req.limit } else { 50 }
-            $data = Find-Elements -Ref $req.ref -AutomationId $req.automationId -Name $req.name -ControlType $req.controlType -Limit $limit
+            $data = Find-Elements -Ref $req.ref -AutomationId $req.automationId -Name $req.name -ControlType $req.controlType -ClassName $req.className -Limit $limit
         }
 
         'wait_for' {
@@ -418,7 +460,7 @@ try {
             $found = $false
             $foundEl = $null
             while ($true) {
-                $r = Find-Elements -Ref $req.ref -AutomationId $req.automationId -Name $req.name -ControlType $req.controlType -Limit 1
+                $r = Find-Elements -Ref $req.ref -AutomationId $req.automationId -Name $req.name -ControlType $req.controlType -ClassName $req.className -Limit 1
                 if ($r.elements.Count -gt 0) { $found = $true; $foundEl = $r.elements[0]; break }
                 if ((Get-Date) -ge $deadline) { break }
                 Start-Sleep -Milliseconds 300
@@ -438,8 +480,15 @@ try {
                 throw "Element does not support ValuePattern (cannot set value): $($req.ref)"
             }
             $vp.SetValue([string]$req.value)
-            $resolved2 = Resolve-Ref $req.ref
-            $data = ConvertTo-ElementJson -Element $resolved2.Element -Ref $req.ref
+            $expectedValue = [string]$req.value
+            $deadline = (Get-Date).AddMilliseconds(1500)
+            while ($true) {
+                $resolved2 = Resolve-Ref $req.ref
+                $current = ConvertTo-ElementJson -Element $resolved2.Element -Ref $req.ref
+                if ($current.isPassword -or $current.value -eq $expectedValue) { $data = $current; break }
+                if ((Get-Date) -ge $deadline) { throw "ValuePattern SetValue returned but the requested value was not observable before the verification deadline" }
+                Start-Sleep -Milliseconds 25
+            }
         }
 
         'invoke' {
@@ -488,7 +537,7 @@ try {
             $data = ConvertTo-ElementJson -Element $resolved2.Element -Ref $req.ref
         }
 
-        # ---- Desktop Computer Use (Phase 4) coordinate-based fallback actions ----
+        # ---- Desktop Computer Use coordinate-based fallback actions ----
 
         'window_at_point' {
             $data = $null
@@ -558,8 +607,8 @@ try {
         }
 
         'screenshot_fullscreen' {
-            # Real finding (commander review, multi-monitor machine): the
-            # virtual screen origin is NOT always (0,0) — this machine's
+            # On multi-monitor layouts the virtual screen origin is not always
+            # (0,0); a monitor can be positioned above or left of the primary,
             # second monitor puts it at (0,-1080). A pixel in the saved PNG
             # is at SCREEN coordinate (pixelX + originX, pixelY + originY),
             # which desktop_annotate_point/desktop_click need — so the
@@ -651,13 +700,24 @@ try {
                 }
                 default { throw "Unknown button: $button" }
             }
-            # A real click is the reliable way to move OS-level foreground
-            # focus (unlike UIA SetFocus, which Windows' foreground-lock can
-            # silently ignore for a background caller) — but the OS still
-            # needs a moment to commit that focus change before raw
-            # keyboard input sent right after this returns will land here.
-            Start-Sleep -Milliseconds 150
-            $data = @{ clicked = $true; x = $x; y = $y; button = $button }
+            # Do not guess a settle delay. If the caller supplied the pid
+            # observed under this point before the click, wait until Windows
+            # reports that exact process as foreground. This separates
+            # "SendInput accepted a click" from "the intended app owns OS
+            # keyboard focus" and fails loudly if another app wins the race.
+            $foregroundPid = [uint32][NativeInput]::ForegroundProcessId()
+            if ($null -ne $req.expectedPid) {
+                $expectedPid = [uint32]$req.expectedPid
+                $deadline = (Get-Date).AddMilliseconds(1500)
+                while ($foregroundPid -ne $expectedPid -and (Get-Date) -lt $deadline) {
+                    Start-Sleep -Milliseconds 25
+                    $foregroundPid = [uint32][NativeInput]::ForegroundProcessId()
+                }
+                if ($foregroundPid -ne $expectedPid) {
+                    throw "click was sent, but foreground pid is $foregroundPid instead of expected pid $expectedPid"
+                }
+            }
+            $data = @{ clicked = $true; x = $x; y = $y; button = $button; foregroundPid = $foregroundPid }
         }
 
         'move' {
@@ -690,14 +750,27 @@ try {
 
         'type_text' {
             $t = [string]$req.text
-            foreach ($ch in $t.ToCharArray()) {
-                [NativeInput]::KeyUnicodeChar($ch)
-                Start-Sleep -Milliseconds 5
+            if ($null -ne $req.expectedPid) {
+                $expectedPid = [uint32]$req.expectedPid
+                $beforePid = [uint32][NativeInput]::ForegroundProcessId()
+                if ($beforePid -ne $expectedPid) { throw "refusing keyboard input: foreground pid changed to $beforePid (expected $expectedPid)" }
             }
-            $data = @{ typed = $true; length = $t.Length }
+            # One SendInput call instead of one call + sleep per character.
+            # This materially shrinks the window in which unrelated user/app
+            # focus changes can split a string across two applications.
+            [NativeInput]::TypeUnicode($t)
+            $afterPid = [uint32][NativeInput]::ForegroundProcessId()
+            if ($null -ne $req.expectedPid -and $afterPid -ne [uint32]$req.expectedPid) {
+                throw "keyboard input completed but foreground pid changed during the operation (now $afterPid)"
+            }
+            $data = @{ typed = $true; length = $t.Length; foregroundPid = $afterPid }
         }
 
         'key_press' {
+            if ($null -ne $req.expectedPid) {
+                $beforePid = [uint32][NativeInput]::ForegroundProcessId()
+                if ($beforePid -ne [uint32]$req.expectedPid) { throw "refusing key input: foreground pid changed to $beforePid (expected $($req.expectedPid))" }
+            }
             $keyStr = [string]$req.key
             $parts = $keyStr.Split('+')
             $mainKey = $parts[$parts.Count - 1]
@@ -709,7 +782,9 @@ try {
             [NativeInput]::KeyVk([UInt16]$mainVk, $false)
             [NativeInput]::KeyVk([UInt16]$mainVk, $true)
             for ($i = $modVks.Count - 1; $i -ge 0; $i--) { [NativeInput]::KeyVk([UInt16]$modVks[$i], $true) }
-            $data = @{ pressed = $true; key = $keyStr }
+            $afterPid = [uint32][NativeInput]::ForegroundProcessId()
+            if ($null -ne $req.expectedPid -and $afterPid -ne [uint32]$req.expectedPid) { throw "key input completed but foreground pid changed during the operation (now $afterPid)" }
+            $data = @{ pressed = $true; key = $keyStr; foregroundPid = $afterPid }
         }
 
         'wait' {

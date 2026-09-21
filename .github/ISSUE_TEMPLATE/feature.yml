@@ -1,0 +1,15 @@
+name: Feature request
+description: Propose a focused improvement
+title: "[Feature] "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / use case
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Security / permission impact
+      description: Explain whether this adds a mutation path, secret flow, process/network access, or replay behavior.

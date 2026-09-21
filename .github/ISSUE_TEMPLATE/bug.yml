@@ -1,0 +1,36 @@
+name: Bug report
+description: Report a reproducible defect without credentials or private data
+title: "[Bug] "
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Prefer localhost and dummy data. Never paste secrets, cookies, tokens, or private browser data.
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      placeholder: "OpenCode 1.18.31; Node 24.x; Windows 11"
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Browser
+        - Windows UIA
+        - Desktop fallback
+        - Chrome attach
+        - Secret Broker
+        - Workflow
+        - Scheduler
+        - Installer
+        - Packaging

@@ -72,7 +72,7 @@ try {
 
   // value-based scrubbing: after resolution, the value is scrubbed from ANY
   // tool result text, even one that never called secret-broker.js itself —
-  // this is the exact class of leak the independent Phase 0-5 audit found
+// this is the exact class of leak the earlier security audit found
   // in snapshot.js, now covered generically at the server.js choke point.
   const fakeToolResult = { content: [{ type: "text", text: `some unrelated tool happened to echo: ${SECRET_VALUE}` }] };
   const scrubbed = scrubKnownSecrets(fakeToolResult);

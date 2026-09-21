@@ -1,4 +1,4 @@
-# Shared launcher invoked by every OpenCodeUpgrade-* scheduled task
+# Shared launcher invoked by opencode-computer-use scheduled tasks
 # (registered via scheduled_task_register). One generic script, not one
 # generated per task — the prompt/model are looked up by TaskId from the
 # files scheduled_task_register wrote under artifacts/tasks/.
@@ -14,16 +14,33 @@ $root = Split-Path -Parent $PSScriptRoot
 $tasksDir = Join-Path $root "artifacts\tasks"
 $promptFile = Join-Path $tasksDir "$TaskId.prompt.txt"
 $metaFile = Join-Path $tasksDir "$TaskId.meta.json"
-$logFile = Join-Path $tasksDir "$TaskId.log"
+$statusFile = Join-Path $tasksDir "$TaskId.status.json"
+$debugLogFile = Join-Path $tasksDir "$TaskId.debug.log"
+$debugRawLog = $env:OPENCODE_CU_SCHEDULE_DEBUG_LOG -eq "1"
 
 $prompt = Get-Content $promptFile -Raw
 $meta = Get-Content $metaFile -Raw | ConvertFrom-Json
 
-"[$(Get-Date -Format o)] starting scheduled task '$TaskId'" | Out-File -FilePath $logFile -Append -Encoding utf8
+$startedAt = (Get-Date).ToUniversalTime().ToString("o")
+@{ taskId = $TaskId; state = "running"; startedAt = $startedAt; finishedAt = $null; exitCode = $null } |
+    ConvertTo-Json -Compress | Set-Content -LiteralPath $statusFile -Encoding UTF8
 
 try {
-    & opencode run $prompt -m $meta.model --print-logs *>> $logFile
-    "[$(Get-Date -Format o)] finished scheduled task '$TaskId' exit=$LASTEXITCODE" | Out-File -FilePath $logFile -Append -Encoding utf8
+    if ($debugRawLog) {
+        # Windows PowerShell 5.1's *>> writes UTF-16LE by default, which makes
+        # cross-tool inspection inconsistent. Merge stderr into stdout and
+        # explicitly persist raw debug output as UTF-8 instead.
+        & opencode run $prompt -m $meta.model --print-logs 2>&1 |
+            Out-File -LiteralPath $debugLogFile -Append -Encoding utf8
+    } else {
+        & opencode run $prompt -m $meta.model *> $null
+    }
+    $exit = $LASTEXITCODE
+    @{ taskId = $TaskId; state = $(if ($exit -eq 0) { "finished" } else { "failed" }); startedAt = $startedAt; finishedAt = (Get-Date).ToUniversalTime().ToString("o"); exitCode = $exit } |
+        ConvertTo-Json -Compress | Set-Content -LiteralPath $statusFile -Encoding UTF8
+    exit $exit
 } catch {
-    "[$(Get-Date -Format o)] scheduled task '$TaskId' FAILED: $($_.Exception.Message)" | Out-File -FilePath $logFile -Append -Encoding utf8
+    @{ taskId = $TaskId; state = "failed"; startedAt = $startedAt; finishedAt = (Get-Date).ToUniversalTime().ToString("o"); exitCode = 1; errorType = $_.Exception.GetType().FullName } |
+        ConvertTo-Json -Compress | Set-Content -LiteralPath $statusFile -Encoding UTF8
+    exit 1
 }

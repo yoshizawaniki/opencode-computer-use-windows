@@ -68,7 +68,10 @@ process outside the window allowlist, killing this server's own/parent process).
 aren't obstacles to route around — if refused, explain why to the user rather than retrying
 with a workaround.
 
-There is deliberately NO origin-level gate on `browser_click`/`browser_type`/etc. themselves
-(see `src/PERMISSION_COVERAGE.md` in this repo for why) — which means YOU are the gate for
-actions that send a message, post content, or spend money. Ask the user in chat before
-clicking Send/Submit/Buy/Post, exactly as the general orchestration rules already require.
+Generic page mutation is constrained by a deterministic origin policy in the MCP server.
+Launch mode only mutates loopback/project-local pages by default; external sites require an
+exact `OPENCODE_CU_BROWSER_ORIGINS` entry. Attached Chrome uses the separate, stricter
+`OPENCODE_CU_ATTACH_ORIGINS` list. Do not route around a scope refusal. The origin guard is
+a technical boundary, not a substitute for user intent: actions that send messages, publish
+content, spend money, or otherwise create consequential external effects still require the
+appropriate human approval before acting.

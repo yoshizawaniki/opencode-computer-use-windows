@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  portable-safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --force
+      - run: npm run check:syntax
+      - run: npm run test:unit
+      - run: npm run check:licenses
+      - run: npm run check:secrets
+      - run: npm run check:package
+
+  isolated-browser:
+    runs-on: windows-latest
+    env:
+      OPENCODE_CU_HEADLESS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install chromium
+      - run: npm run test:browser
+
+  windows-static:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run check:syntax
+      - run: npm run test:unit
+
+# Real UIA/Desktop, scratch-Chrome attach, and Task Scheduler checks remain
+# explicit local/manual release gates. A hosted runner without a stable
+# interactive desktop is not treated as proof that real GUI E2E is healthy.

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   getActivePage,
+  getMutationPage,
   getContext,
   getActiveTabId,
   getConsoleLogs,
@@ -154,8 +155,9 @@ export function registerDevtoolsTools(server) {
       inputSchema: {},
     },
     async () => {
+      const page = await getActivePage();
       const context = await getContext();
-      const cookies = await context.cookies();
+      const cookies = await context.cookies(page.url());
       const scrubbed = cookies.map((c) => {
         const out = Object.fromEntries(COOKIE_FIELDS.map((f) => [f, c[f] ?? null]));
         out.hasValue = Boolean(c.value);
@@ -244,7 +246,7 @@ export function registerDevtoolsTools(server) {
           "browser_evaluate is disabled (set OPENCODE_CU_ALLOW_EVAL=1 in the MCP server's environment to enable it)"
         );
       }
-      const page = await getActivePage();
+      const page = await getMutationPage();
       const result = await page.evaluate(expression);
       const serialized = JSON.stringify(result ?? null);
       return text(serialized.length > 2000 ? serialized.slice(0, 2000) + "…truncated" : serialized);

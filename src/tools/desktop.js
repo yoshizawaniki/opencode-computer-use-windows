@@ -95,8 +95,8 @@ export function registerDesktopTools(server) {
       inputSchema: { x: z.number(), y: z.number(), button: z.enum(["left", "right", "double"]).default("left") },
     },
     async ({ x, y, button }) => {
-      await assertPointAllowed(x, y);
-      await callUia({ action: "click", x, y, button });
+      const target = await assertPointAllowed(x, y);
+      await callUia({ action: "click", x, y, button, expectedPid: target.processId });
       return text(await callUia({ action: "active_window" }));
     }
   );
@@ -135,7 +135,13 @@ export function registerDesktopTools(server) {
       inputSchema: { fromX: z.number(), fromY: z.number(), toX: z.number(), toY: z.number() },
     },
     async ({ fromX, fromY, toX, toY }) => {
-      await assertPointAllowed(fromX, fromY);
+      const source = await assertPointAllowed(fromX, fromY);
+      const destination = await assertPointAllowed(toX, toY);
+      if (source.processId !== destination.processId) {
+        throw new Error(
+          `desktop_drag refused: source pid ${source.processId} and destination pid ${destination.processId} differ; cross-process drag/drop is not permitted`
+        );
+      }
       return text(await callUia({ action: "drag", fromX, fromY, toX, toY }));
     }
   );
@@ -167,8 +173,8 @@ export function registerDesktopTools(server) {
       inputSchema: { text: z.string() },
     },
     async ({ text: value }) => {
-      await assertFocusAllowed();
-      return text(await callUia({ action: "type_text", text: value }));
+      const win = await assertFocusAllowed();
+      return text(await callUia({ action: "type_text", text: value, expectedPid: win.processId }));
     }
   );
 
@@ -188,7 +194,7 @@ export function registerDesktopTools(server) {
     async ({ name }) => {
       const win = await assertFocusAllowed();
       const value = await resolveSecret(name, win?.processName);
-      const result = await callUia({ action: "type_text", text: value });
+      const result = await callUia({ action: "type_text", text: value, expectedPid: win.processId });
       return text({ ...result, secretName: name });
     }
   );
@@ -201,8 +207,8 @@ export function registerDesktopTools(server) {
       inputSchema: { key: z.string() },
     },
     async ({ key }) => {
-      await assertFocusAllowed();
-      return text(await callUia({ action: "key_press", key }));
+      const win = await assertFocusAllowed();
+      return text(await callUia({ action: "key_press", key, expectedPid: win.processId }));
     }
   );
 

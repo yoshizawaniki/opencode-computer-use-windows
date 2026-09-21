@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>opencode-computer-use local demo</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 44rem; margin: 3rem auto; padding: 0 1rem; }
+      label { display: block; margin: 1rem 0; }
+      #result { margin-top: 1.5rem; padding: 1rem; border: 1px solid #999; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Local Computer Use Demo</h1>
+      <form id="demo-form">
+        <label>Name <input id="name" name="name" autocomplete="off" /></label>
+        <label>
+          Mode
+          <select id="mode" name="mode">
+            <option value="observe">Observe</option>
+            <option value="verify">Verify</option>
+          </select>
+        </label>
+        <button id="submit" type="submit">Submit</button>
+      </form>
+      <div id="result" role="status">Not submitted</div>
+    </main>
+    <script>
+      document.querySelector("#demo-form").addEventListener("submit", (event) => {
+        event.preventDefault();
+        const data = new FormData(event.currentTarget);
+        document.querySelector("#result").textContent = "Submitted: " + data.get("name") + " / " + data.get("mode");
+      });
+    </script>
+  </body>
+</html>

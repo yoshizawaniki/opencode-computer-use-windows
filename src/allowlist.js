@@ -4,9 +4,9 @@
 // covers launch/close/kill (destructive); this covers everything else
 // (invoke/set-value/click/type/etc.), which config permission is too coarse
 // to scope to individual target apps.
-const DEFAULT_ALLOWLIST = ["notepad.exe", "opencode.exe", "systemsettings.exe"];
+const DEFAULT_ALLOWLIST = [];
 
-function currentAllowlist() {
+export function currentAllowlist() {
   const env = process.env.OPENCODE_CU_WINDOW_ALLOWLIST;
   const list = env ? env.split(",").map((s) => s.trim()) : DEFAULT_ALLOWLIST;
   return list.map((s) => s.toLowerCase()).filter(Boolean);
@@ -17,7 +17,7 @@ export function assertProcessAllowed(processName) {
   const allowlist = currentAllowlist();
   if (!allowlist.includes(name)) {
     throw new Error(
-      `process "${processName}" is not in the window/desktop tool allowlist (${allowlist.join(", ")}). ` +
+      `process "${processName}" is not in the window/desktop tool allowlist (${allowlist.join(", ") || "none; deny-by-default"}). ` +
         "Add it to OPENCODE_CU_WINDOW_ALLOWLIST in the MCP server's environment to allow mutating it."
     );
   }

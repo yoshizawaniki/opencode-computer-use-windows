@@ -7,14 +7,14 @@
 // recording of a human independently driving the mouse/keyboard (outside
 // any tool call) is NOT implemented: for Windows that means a resident,
 // global-hook process for the life of a recording session — exactly the
-// class of long-lived subprocess whose lifecycle bugs Phase 0-5 spent
+// class of long-lived subprocess whose lifecycle bugs earlier browser/UIA work
 // several audit rounds eliminating for the FAR simpler per-call uia.ps1
 // model. Recording at the tool-call layer gets the same practical result
 // (a replayable, parameterizable workflow) without reintroducing that risk,
 // and is inherently "semantic" rather than coordinate-based — refs are
 // translated to role/name (browser) or automationId/name/controlType
 // (windows) at record time specifically so replay doesn't depend on a
-// stale ref. This tradeoff was flagged to commander rather than assumed.
+// stale ref. Fail loudly rather than guessing across a restarted application.
 import { mkdirSync, readFileSync, writeFileSync, readdirSync, existsSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,7 +27,7 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const WORKFLOW_DIR = path.join(ROOT, "..", "artifacts", "workflows");
 const SENSITIVE_RE = new RegExp(SENSITIVE_NAME_PATTERN, "i");
 
-// FAIL-CLOSED allowlist for workflow_replay dispatch. Found in commander
+// FAIL-CLOSED allowlist for workflow_replay dispatch. In-process replay
 // review: replayWorkflow() calls tool-registry.js handlers IN-PROCESS,
 // which bypasses the OpenCode host's ask-permission dialog entirely (the
 // host gates by MCP tool-call name; an in-process function call never goes
@@ -170,6 +170,7 @@ export async function recordStep(toolName, args, preCapturedBrowserInfo) {
           automationId: el.automationId || null,
           name: el.name || null,
           controlType: el.controlType || null,
+          className: el.className || null,
           processName: el.processName || null,
         };
         delete step.args.ref;
@@ -311,6 +312,7 @@ export async function replayWorkflow(name, params = {}) {
         automationId: step.target.automationId || undefined,
         name: step.target.name || undefined,
         controlType: step.target.controlType || undefined,
+        className: step.target.className || undefined,
         limit: 5,
       });
       // windows_find returns an MCP {content:[{text}]} result; unwrap it —
