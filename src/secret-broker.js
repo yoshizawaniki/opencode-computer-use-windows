@@ -12,7 +12,17 @@ import { registerSecretValue } from "./redaction.js";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "secret-resolve.ps1");
 
-function callSecretResolve(request, timeoutMs = 10000) {
+function secretResolveTimeoutMs() {
+  const configured = Number(process.env.OPENCODE_CU_SECRET_RESOLVE_TIMEOUT_MS);
+  if (Number.isFinite(configured) && configured >= 1000 && configured <= 120000) return configured;
+  // This is a process-health deadline, not a synchronization sleep. A warm
+  // local resolve normally returns much faster, but hosted Windows runners
+  // can spend >10s starting a nested Windows PowerShell process and loading
+  // DPAPI assemblies under endpoint protection.
+  return 30000;
+}
+
+function callSecretResolve(request, timeoutMs = secretResolveTimeoutMs()) {
   return new Promise((resolve, reject) => {
     const child = spawn(
       "powershell.exe",
