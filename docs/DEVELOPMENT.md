@@ -11,7 +11,7 @@
 | `npm run test:scheduler` | checkpoints + Task Scheduler | creates/deletes namespaced test task |
 | `npm run test:all` | all above | yes |
 
-Hosted CI runs what can be made deterministic there. Real clipboard, interactive Windows UIA/Desktop, scratch-Chrome attach, and Task Scheduler integration remain explicit local/manual release gates rather than being marked green from a non-interactive runner.
+Hosted CI runs what can be made deterministic there. The isolated browser job skips the DPAPI-backed `browser_secret_fill` integration path because GitHub-hosted Windows runners do not provide a reliable local secret-store session; Secret Broker scope/redaction logic remains covered by unit tests. Real clipboard, Secret Broker injection, interactive Windows UIA/Desktop, scratch-Chrome attach, and Task Scheduler integration remain explicit local/manual release gates rather than being marked green from a non-interactive runner.
 
 ## Pre-release gate
 

@@ -62,7 +62,7 @@ must(/redacted, length=23/.test(navState.snapshot), "the sessionKey field's real
 // file:// pages all share origin "null" (WHATWG spec), which is what
 // assertNavigateAllowed's file:// project-root scoping already relies on to
 // keep this usable for local test fixtures.
-if (process.platform === "win32") {
+if (process.platform === "win32" && process.env.CI !== "true") {
   function runSecretCli(args, stdinText) {
     return new Promise((resolve, reject) => {
       const child = spawnProc(
@@ -111,6 +111,8 @@ if (process.platform === "win32") {
   } finally {
     await runSecretCli(["-Action", "remove", "-Name", "oc-smoke-secret"]);
   }
+} else if (process.platform === "win32") {
+  console.log("SKIP: browser_secret_fill DPAPI integration requires a local interactive Windows session");
 }
 
 const snap = await client.callTool({ name: "browser_snapshot", arguments: {} });
