@@ -39,8 +39,10 @@ retry blindly, re-fetch via `windows_list`/`windows_tree` first.
 
 `windows_focus` sets UIA logical focus, which does NOT guarantee the app becomes the OS-level
 foreground window that `desktop_type_text`/`desktop_key` (real SendInput) actually targets.
-If you need raw keyboard input, call `desktop_click` on the target field FIRST — that
-reliably establishes real OS focus — rather than `windows_focus` alone. Prefer
+If you need raw keyboard input, call `desktop_click` on the target field FIRST to establish
+real OS foreground ownership, then `windows_focus` on that field's ref to confirm the
+specific control has keyboard focus before `desktop_type_text`/`desktop_key`. Do not use
+`windows_focus` alone as proof of OS foreground ownership. Prefer
 `windows_set_value` when the target supports it; it doesn't depend on OS focus at all.
 
 ## Secrets

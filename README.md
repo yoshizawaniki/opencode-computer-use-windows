@@ -202,6 +202,7 @@ Contributor-safe default:
 
 Explicit integration gates:
 
+    npm run test:clipboard
     npm run test:windows
     npm run test:attach
     npm run test:scheduler
@@ -217,7 +218,7 @@ Release/security checks:
 
 npm test contains unit/security/installer tests plus the isolated browser smoke suite. It is designed not to create Windows scheduled tasks, attach to a real Chrome profile, or drive the physical Windows desktop.
 
-The explicit integration commands may launch local test applications, use real UI input, launch a scratch Chrome profile, or create a short-lived namespaced scheduled task. Read docs/DEVELOPMENT.md before running them on a busy desktop.
+The explicit integration commands may temporarily read/write and restore the text clipboard, launch local test applications, use real UI input, launch a scratch Chrome profile, or create a short-lived namespaced scheduled task. Read docs/DEVELOPMENT.md before running them on a busy desktop.
 
 ## Uninstall
 

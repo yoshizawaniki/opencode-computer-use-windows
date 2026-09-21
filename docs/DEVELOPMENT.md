@@ -5,12 +5,13 @@
 | Command | Scope | Real external/OS side effects |
 |---|---|---|
 | `npm test` | unit/security/installer + isolated browser smoke | no Task Scheduler, no Chrome attach, no physical desktop input intended |
+| `npm run test:clipboard` | real Windows clipboard read/write/restore | requires an interactive Windows clipboard station |
 | `npm run test:windows` | real Windows UIA/Desktop fixture | drives a visible test window and real input |
 | `npm run test:attach` | scratch Chrome attach profile | launches a dedicated local Chrome profile/debug port |
 | `npm run test:scheduler` | checkpoints + Task Scheduler | creates/deletes namespaced test task |
 | `npm run test:all` | all above | yes |
 
-Hosted CI runs what can be made deterministic there. Real interactive Windows UIA/Desktop remains a local/manual release gate rather than being marked green from a non-interactive runner.
+Hosted CI runs what can be made deterministic there. Real clipboard, interactive Windows UIA/Desktop, scratch-Chrome attach, and Task Scheduler integration remain explicit local/manual release gates rather than being marked green from a non-interactive runner.
 
 ## Pre-release gate
 

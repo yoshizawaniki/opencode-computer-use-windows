@@ -527,14 +527,19 @@ try {
         'focus' {
             $resolved = Resolve-Ref $req.ref
             $resolved.Element.SetFocus()
-            # SetFocus() returns before the OS has actually committed the
-            # focus change — sending raw input (desktop_type_text/key) right
-            # after this returns can land on the PREVIOUS focus target and
-            # silently lose most of the input. Observed in practice: only
-            # the first 2-3 characters of a typed string landed without this.
-            Start-Sleep -Milliseconds 200
-            $resolved2 = Resolve-Ref $req.ref
-            $data = ConvertTo-ElementJson -Element $resolved2.Element -Ref $req.ref
+            # SetFocus() is asynchronous from the perspective of another UIA
+            # observer. Do not guess a settle sleep: re-resolve until the
+            # requested element itself reports HasKeyboardFocus.
+            $deadline = (Get-Date).AddMilliseconds(1500)
+            while ($true) {
+                $resolved2 = Resolve-Ref $req.ref
+                $current = ConvertTo-ElementJson -Element $resolved2.Element -Ref $req.ref
+                if ($current.hasKeyboardFocus) { $data = $current; break }
+                if ((Get-Date) -ge $deadline) {
+                    throw "SetFocus returned but the requested element did not report keyboard focus before the verification deadline"
+                }
+                Start-Sleep -Milliseconds 25
+            }
         }
 
         # ---- Desktop Computer Use coordinate-based fallback actions ----

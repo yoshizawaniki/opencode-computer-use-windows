@@ -24,9 +24,8 @@ $secondary.Margin = New-Object System.Windows.Thickness(0, 20, 0, 0)
 
 $text = New-Object System.Windows.Controls.TextBox
 $text.Name = "MainText"
-$text.AcceptsReturn = $true
-$text.Height = 100
-$text.TextWrapping = "Wrap"
+$text.AcceptsReturn = $false
+$text.Height = 34
 [System.Windows.Automation.AutomationProperties]::SetName($text, "Main editor")
 $primary.Children.Add($text) | Out-Null
 
@@ -52,7 +51,7 @@ $root.Children.Add($secondary) | Out-Null
 
 $reparent.Add_Click({
     [void]$primary.Children.Remove($text)
-    $text.Height = 70
+    $text.Height = 34
     [void]$secondary.Children.Add($text)
     $status.Text = "Reparented"
 })

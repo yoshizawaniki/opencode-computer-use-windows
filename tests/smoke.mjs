@@ -471,17 +471,6 @@ must(replayOriginMutationRejected, "workflow_replay cannot bypass the browser or
 await client.callTool({ name: "workflow_delete", arguments: { name: "smoke-wf-origin-bypass" } });
 await client.callTool({ name: "browser_navigate", arguments: { url: fixtureUrl } });
 
-// Clipboard: metadata-only by default, real value opt-in, write round-trips.
-if (process.platform === "win32") {
-  const CLIP_TEXT = "opencode-clipboard-smoke-test-98765";
-  await client.callTool({ name: "clipboard_write", arguments: { text: CLIP_TEXT } });
-  const readDefault = JSON.parse((await client.callTool({ name: "clipboard_read", arguments: {} })).content[0].text);
-  must(readDefault.length === CLIP_TEXT.length, `clipboard_read reports the real length by default, got ${readDefault.length}`);
-  must(!("value" in readDefault), "clipboard_read omits the raw value by default");
-  const readValue = JSON.parse((await client.callTool({ name: "clipboard_read", arguments: { includeValue: true } })).content[0].text);
-  must(readValue.value === CLIP_TEXT, "clipboard_read with includeValue:true returns the real value that was written");
-}
-
 // Artifact preview: text content returned inline, path scoping enforced.
 const previewDir = path.join(root, "artifacts", "screenshots");
 await mkdir(previewDir, { recursive: true });

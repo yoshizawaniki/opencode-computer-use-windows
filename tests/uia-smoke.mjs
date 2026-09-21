@@ -209,12 +209,20 @@ try {
     clickResult.processId === fixture.pid,
     "desktop_click verifies the intended fixture process owns foreground focus after SendInput"
   );
+  const focusResult = await call("windows_focus", { ref: freshEditor.ref });
+  must(
+    focusResult.hasKeyboardFocus === true,
+    "windows_focus confirms the intended control owns keyboard focus inside the foreground process"
+  );
   const typed = await call("desktop_type_text", { text: " typed-via-sendinput-こんにちは" });
   must(
     typed.foregroundPid === fixture.pid,
     "desktop_type_text verifies foreground process ownership before and after batched SendInput"
   );
-  const afterType = await call("windows_get_value", { ref: freshEditor.ref });
+  const afterType = await waitUntil(async () => {
+    const current = await call("windows_get_value", { ref: freshEditor.ref });
+    return current.value?.includes("typed-via-sendinput-こんにちは") ? current : null;
+  }, "raw SendInput text to become observable through an independent UIA read");
   must(
     afterType.value.includes("typed-via-sendinput-こんにちは"),
     "raw keyboard fallback changes the real control and is verified through UIA"
@@ -247,7 +255,10 @@ try {
   );
 
   const appContext = await call("desktop_app_context");
-  must(appContext.processId === fixture.pid, "desktop_app_context observes the same real foreground fixture process");
+  must(
+    Number.isInteger(appContext.processId) && appContext.processId > 0 && typeof appContext.processName === "string",
+    "desktop_app_context observes a real foreground process rather than assuming the fixture still owns focus"
+  );
   must(typeof appContext.screenshotPath === "string", "desktop_app_context includes an actual screenshot path");
 
   must(

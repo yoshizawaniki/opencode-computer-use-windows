@@ -99,6 +99,39 @@ async function mutatingCall(action, args) {
   return rememberResult(await callUia({ action, ...args, ref: current.ref }));
 }
 
+async function setValueAndVerify(ref, value) {
+  const current = await resolveStableRef(ref);
+  assertProcessAllowed(current.processName);
+
+  const written = rememberResult(
+    await callUia({ action: "set_value", ref: current.ref, value })
+  );
+  if (written?.isPassword) {
+    // Password values are deliberately never returned. Re-resolve once in a
+    // separate bridge process to verify the element still exists, but do not
+    // weaken the redaction boundary just to compare plaintext.
+    return await resolveStableRef(current.ref);
+  }
+
+  // The UIA provider can report the new ValuePattern value to the process
+  // that performed SetValue slightly before a fresh UIA client sees it.
+  // Verify through independent bridge processes so the MCP result reflects
+  // what the next observer can actually read, not only the writer's cache.
+  const deadline = Date.now() + 2500;
+  let observed = written;
+  while (true) {
+    observed = await resolveStableRef(current.ref);
+    if (observed?.value === value) return observed;
+    if (Date.now() >= deadline) {
+      throw new Error(
+        "windows_set_value returned from UIA, but an independent re-observation did not confirm the requested value before the verification deadline " +
+          `(expectedLength=${value.length}, observedLength=${observed?.valueLength ?? "unknown"}, ref=${observed?.ref ?? "unknown"}, automationId=${observed?.automationId ?? ""})`
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 export function registerWindowsTools(server) {
   server.registerTool(
     "windows_list",
@@ -177,7 +210,7 @@ export function registerWindowsTools(server) {
         "element state — not a bare success. Refuses if the target process isn't in the window allowlist.",
       inputSchema: { ref: z.string(), value: z.string() },
     },
-    async ({ ref, value }) => text(await mutatingCall("set_value", { ref, value }))
+    async ({ ref, value }) => text(await setValueAndVerify(ref, value))
   );
 
   server.registerTool(
